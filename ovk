@@ -3875,6 +3875,7 @@ task.spawn(function()
                         return res
                     end
                 end
+		end
             end)
         end
         if not dirGetHookLoaded then
@@ -4575,4 +4576,3 @@ task.spawn(function()
         end
     end)
 end)
-
