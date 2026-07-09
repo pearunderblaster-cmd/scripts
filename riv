@@ -1,0 +1,3653 @@
+pcall(function()
+    assert(getgc, "executor missing getgc")
+    assert(hookfunction, "executor missing hookfunction")
+    assert(getconnections, "executor missing getconnections")
+    assert(newcclosure, "executor missing newcclosure")
+    
+    local rs = game:GetService("ReplicatedStorage")
+    local ls = game:GetService("LogService")
+    local sc = game:GetService("ScriptContext")
+    local lp = game:GetService("Players").LocalPlayer
+
+    task.spawn(function()
+        local function silenceModFolder()
+            local modFolder = rs:WaitForChild("Remotes"):WaitForChild("Moderator", 5)
+            if not modFolder then return end
+            local oldFireServer
+            oldFireServer = hookfunction(Instance.new("RemoteEvent").FireServer, newcclosure(function(self, ...)
+                if not checkcaller() and self:IsDescendantOf(modFolder) then return end
+                return oldFireServer(self, ...)
+            end))
+            local oldInvokeServer
+            oldInvokeServer = hookfunction(Instance.new("RemoteFunction").InvokeServer, newcclosure(function(self, ...)
+                if not checkcaller() and self:IsDescendantOf(modFolder) then return end
+                return oldInvokeServer(self, ...)
+            end))
+        end
+        pcall(silenceModFolder)
+    end)
+
+    task.spawn(function()
+        for _, v in pairs(getgc(true)) do
+            if type(v) == "function" then
+                pcall(function()
+                    local src = debug.info(v, "s")
+                    if type(src) == "string" and string.find(src, "AnalyticsPipelineController") then
+                        hookfunction(v, newcclosure(function(...) task.wait(9e9) end))
+                    end
+                end)
+            end
+        end
+    end)
+
+    task.spawn(function()
+        pcall(function()
+            local rm = rs:WaitForChild("Remotes"):WaitForChild("AnalyticsPipeline"):WaitForChild("RemoteEvent")
+            for _, c in pairs(getconnections(rm.OnClientEvent)) do
+                if c.Function then hookfunction(c.Function, newcclosure(function() end)) end
+            end
+        end)
+    end)
+
+    task.spawn(function()
+        for _, c in ipairs(getconnections(ls.MessageOut)) do
+            if c.Function then pcall(function() hookfunction(c.Function, newcclosure(function() end)) end) end
+        end
+        for _, c in ipairs(getconnections(sc.Error)) do
+            pcall(function() c:Disable() end)
+        end
+        pcall(function() hookfunction(sc.Error.Connect, newcclosure(function() return nil end)) end)
+    end)
+
+    task.spawn(function()
+        for _, n in ipairs({"Kick", "kick"}) do
+            if type(lp[n]) == "function" then
+                local old
+                old = hookfunction(lp[n], newcclosure(function(self, ...)
+                    if self == lp then return end
+                    return old(self, ...)
+                end))
+            end
+        end
+    end)
+end)
+
+local RunService      = game:GetService("RunService")
+local Players         = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService     = game:GetService("HttpService")
+local TweenService    = game:GetService("TweenService")
+local Debris          = game:GetService("Debris")
+local Lighting        = game:GetService("Lighting")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera      = workspace.CurrentCamera
+
+local CONFIG_FILE   = "rivals_rage_config.json"
+local SAVEABLE_KEYS = {
+    "Master","MenuToggleKey","Teleport","AutoClick","NoRecoil","InfJump","FireRateEnabled","FireRate","AutoPlay","AutoPlaySpeed","AutoPlayAimSmoothness","AutoPlayPathSmoothness","AutoQueue","AutoQueueMode",
+    "SilentAim","SilentAimMode","SilentAimHitChance","Aimbot","AimSmoothness","AimHumanize","AimFOV",
+    "AimVisibleOnly","AimMaxDistance","AimMode","AimPart","AimKeyName",
+    "Triggerbot","TriggerbotDelay",
+    "WalkSpeed","WalkSpeedEnabled","JumpPower","JumpPowerEnabled","TPToCursor",
+    "ESP","ESPBoxStyle","ESPBoxFill","ESPTracer","ESPName","ESPSkeleton",
+    "ESPHealthBar","ESPDistance","ESPLevel","ESPWinStreak","ESPMaxDistance",
+    "ESPFont","ESPTextSize",
+    "UnlockSkins","TeamCheck",
+    "CameraFOV","CameraFOVEnabled",
+    "ChamsESP","ChamsR","ChamsG","ChamsB",
+    "CrosshairEnabled","CrosshairStyle","CrosshairSpin","CrosshairSize","TargetLine","Noclip","Fly",
+    "MapVisuals","MapVisualsPreset","HighSaturation",
+    "MapColorEnabled","MapColorR","MapColorG","MapColorB",
+    "MapDome","MapDomeMaterial","MapDomeColorR","MapDomeColorG","MapDomeColorB","MapDomeTransparency",
+    "ESPColorR","ESPColorG","ESPColorB",
+    "ESPBoxColorR","ESPBoxColorG","ESPBoxColorB",
+    "ESPTracerColorR","ESPTracerColorG","ESPTracerColorB",
+    "ESPNameColorR","ESPNameColorG","ESPNameColorB",
+    "TargetLineColorR","TargetLineColorG","TargetLineColorB",
+    "InfoLogger","InfoLoggerColorR","InfoLoggerColorG","InfoLoggerColorB",
+    "InfoLoggerPlayers","InfoLoggerMaxPlayers", "InfoLoggerRiskyAlert",
+    "UnlockSkins", "ACBypass", "SpoofDevice", "SpoofDeviceType",
+    "RainbowVisuals","RainbowMap","StreamingMode","StreamingAlias",
+}
+local TP_HEIGHT          = 6
+local MAX_STUD_DISTANCE  = 10000
+
+-- =========================================================================
+-- Skybox Presets
+-- =========================================================================
+local SKYBOX_PRESETS = {
+    ["Dark Sky"] = { SkyboxUp = "rbxassetid://570555929", SkyboxRt = "rbxassetid://570555882", SkyboxDn = "rbxassetid://570555964", SkyboxFt = "rbxassetid://570555800", SkyboxLf = "rbxassetid://570555840", SkyboxBk = "rbxassetid://570555736" },
+    ["Art Mountain"] = { SkyboxUp = "rbxassetid://2128462236", SkyboxRt = "rbxassetid://2128462027", SkyboxLf = "rbxassetid://2128462027", SkyboxFt = "rbxassetid://2128458653", SkyboxBk = "rbxassetid://2128458653", SkyboxDn = "rbxassetid://2128462480" },
+    ["Vaporwave"] = { SkyboxUp = "rbxassetid://1417494643", SkyboxRt = "rbxassetid://1417494499", SkyboxLf = "rbxassetid://1417494402", SkyboxFt = "rbxassetid://1417494253", SkyboxBk = "rbxassetid://1417494030", SkyboxDn = "rbxassetid://1417494146" },
+    ["Nebula"] = { SkyboxUp = "rbxassetid://159454288", SkyboxRt = "rbxassetid://159454300", SkyboxLf = "rbxassetid://159454286", SkyboxFt = "rbxassetid://159454293", SkyboxBk = "rbxassetid://159454299", SkyboxDn = "rbxassetid://159454296" },
+    ["Twilight"] = { SkyboxUp = "rbxassetid://264907379", SkyboxRt = "rbxassetid://264908886", SkyboxLf = "rbxassetid://264909758", SkyboxFt = "rbxassetid://264909420", SkyboxBk = "rbxassetid://264908339", SkyboxDn = "rbxassetid://264907909" },
+    ["Lake Sky"] = { SkyboxRt = "rbxassetid://6823531746", SkyboxUp = "rbxassetid://6823528533", SunTextureId = "rbxassetid://5392574622", SkyboxDn = "rbxassetid://6823525702", SkyboxFt = "rbxassetid://6823482923", SkyboxLf = "rbxassetid://6823530023", SkyboxBk = "rbxassetid://6823523318" },
+    ["Alien Red"] = { SkyboxUp = "rbxassetid://7123412196", SkyboxRt = "rbxassetid://7123402505", SkyboxDn = "rbxassetid://7123387679", SkyboxFt = "rbxassetid://7123390433", SkyboxLf = "rbxassetid://7123394786", SkyboxBk = "rbxassetid://7123385217" },
+    ["Black Mesa"] = { SkyboxUp = "rbxassetid://9569598752", SkyboxRt = "rbxassetid://9569601267", SkyboxDn = "rbxassetid://9569613307", SkyboxFt = "rbxassetid://9569611418", SkyboxLf = "rbxassetid://9569608166", SkyboxBk = "rbxassetid://9569742122" },
+    ["Clouds"] = { SkyboxUp = "rbxassetid://570557727", SkyboxRt = "rbxassetid://570557672", SkyboxLf = "rbxassetid://570557620", SkyboxFt = "rbxassetid://570557559", SkyboxBk = "rbxassetid://570557514", SkyboxDn = "rbxassetid://570557775" },
+}
+
+-- =========================================================================
+-- State
+-- =========================================================================
+local STATE = {
+    Master = true,
+    MenuToggleKey = "K",
+    Teleport = false, AutoClick = false, NoRecoil = false, InfJump = false,
+    FireRateEnabled = false, FireRate = 0.05,
+    AutoPlay = false, AutoPlaySpeed = 65, AutoPlayAimSmoothness = 2, AutoPlayPathSmoothness = 20,
+    AutoQueue = false, AutoQueueType = "Direct Queue", AutoQueueMode = "1v1",
+    ViewModelChams = false, ViewModelMaterial = "ForceField",
+    ViewModelColorR = 255, ViewModelColorG = 0, ViewModelColorB = 255, ViewModelNoClothing = false, ViewModelTransparency = 0,
+
+    InfoLogger = false, InfoLoggerColorR = 255, InfoLoggerColorG = 255, InfoLoggerColorB = 255,
+    InfoLoggerPlayers = true, InfoLoggerMaxPlayers = 15, InfoLoggerRiskyAlert = false,
+
+    UnlockSkins = false, ACBypass = false, AutoKill = false,
+
+    SilentAim = false, SilentAimMode = "Regular", SilentAimHitChance = 100, SilentAimUnlimitedRange = false,
+
+    Aimbot = false, AimActive = false, AimMethod = "Mouse", AimSmoothness = 2, AimHumanize = false,
+    AimFOV = 200, AimPart = "Head", AimVisibleOnly = true, AimMaxDistance = 0,
+    AimMode = "Hold", AimKey = Enum.UserInputType.MouseButton2, AimKeyName = "RMB",
+
+    MaxPierce = false, NoBulletDrop = false,
+
+    Triggerbot = false, TriggerbotDelay = 50,
+
+    WalkSpeed = 16, WalkSpeedEnabled = false,
+    JumpPower = 50, JumpPowerEnabled = false,
+    TPToCursor = false,
+
+    CameraFOV = 70, CameraFOVEnabled = false,
+
+    ChamsESP = false, ChamsR = 255, ChamsG = 50,  ChamsB = 50,
+    BulletTracers = false, TracerR = 255, TracerG = 165, TracerB = 0,
+    ImpactMarkers = false, ImpactR = 255, ImpactG = 255, ImpactB = 255,
+    AimTrajectory = false, AimTrajR = 100, AimTrajG = 200, AimTrajB = 255,
+
+    CrosshairEnabled = false, CrosshairStyle = "emoji", CrosshairSpin = false, CrosshairSize = 100,
+    TargetLine = false, Noclip = false, Fly = false,
+    MapVisuals = false, MapVisualsPreset = "Arctic Night", HighSaturation = false,
+    MapColorEnabled = false, MapColorR = 255, MapColorG = 0, MapColorB = 128,
+    MapDome = false, MapDomeMaterial = "Neon",
+    MapDomeColorR = 255, MapDomeColorG = 128, MapDomeColorB = 0, MapDomeTransparency = 0,
+
+    ESP = false, ESPBoxStyle = "Full Box", ESPBoxFill = false, ESPTracer = false,
+    ESPName = true, ESPSkeleton = false, ESPHealthBar = false, ESPDistance = false,
+    ESPLevel = false, ESPWinStreak = false,
+    ESPMaxDistance = 500,
+    ESPProjectiles = false,
+    ESPColorR = 240, ESPColorG = 240, ESPColorB = 240,
+    ESPBoxColorR = 240, ESPBoxColorG = 240, ESPBoxColorB = 240,
+    ESPTracerColorR = 240, ESPTracerColorG = 240, ESPTracerColorB = 240,
+    ESPNameColorR = 255, ESPNameColorG = 255, ESPNameColorB = 255,
+    TargetLineColorR = 255, TargetLineColorG = 50, TargetLineColorB = 50,
+    ESPFont = "UI", ESPTextSize = 13,
+
+    TeamCheck = false, RainbowVisuals = false, RainbowMap = false,
+    SpoofDevice = false, SpoofDeviceType = "Mobile",
+    StreamingMode = false, StreamingAlias = "Streamer",
+    AntiExplosion = false, AntiMolotov = false,
+    DamageSFX = false, DamageSFXSound = "cod hitmarker",
+    ElimSFX = false, ElimSFXSound = "cod",
+    ShootSFX = false, ShootSFXSound = "cod",
+    ReloadSFX = false, ReloadSFXSound = "cod glock reload",
+
+    SkyboxEnabled = false, SkyboxPreset = "Dark Sky",
+}
+
+local AIM_KEYBIND_OPTIONS = { "RMB","LMB","MMB","Q","E","F","R","Z","X","C","V","Mobile" }
+local AIM_KEYBIND_MAP = {
+    RMB = Enum.UserInputType.MouseButton2, LMB = Enum.UserInputType.MouseButton1,
+    MMB = Enum.UserInputType.MouseButton3,
+    Q = Enum.KeyCode.Q, E = Enum.KeyCode.E, F = Enum.KeyCode.F,
+    R = Enum.KeyCode.R, Z = Enum.KeyCode.Z, X = Enum.KeyCode.X,
+    C = Enum.KeyCode.C, V = Enum.KeyCode.V,
+}
+
+local _saveDirty = false
+local function saveConfig() _saveDirty = true end
+local function updateState(key, value) STATE[key] = value; saveConfig() end
+local function updateColor(keys, color)
+    STATE[keys[1]] = math.floor(color.R * 255)
+    STATE[keys[2]] = math.floor(color.G * 255)
+    STATE[keys[3]] = math.floor(color.B * 255)
+    saveConfig()
+end
+
+task.spawn(function()
+    while task.wait(1) do
+        if _saveDirty and writefile then
+            _saveDirty = false
+            local t = {}
+            for _, k in ipairs(SAVEABLE_KEYS) do t[k] = STATE[k] end
+            pcall(writefile, CONFIG_FILE, HttpService:JSONEncode(t))
+        end
+    end
+end)
+
+task.spawn(function()
+    local modeMap = {
+        ["Queue Pad #1"] = "1v1",
+        ["Queue Pad #2"] = "1v1",
+        ["Queue Pad #3"] = "2v2",
+        ["Queue Pad #4"] = "2v2",
+        ["Queue Pad #5"] = "3v3",
+        ["Queue Pad #6"] = "3v3",
+        ["Queue Pad #7"] = "5v5",
+        ["Queue Pad #8"] = "4v4",
+        ["Queue Pad #9"] = "1v1v1",
+        ["Queue Pad #10"] = "2v2v2"
+    }
+
+    local modeCaps = {
+        ["1v1"] = 1,
+        ["2v2"] = 2,
+        ["3v3"] = 3,
+        ["4v4"] = 4,
+        ["5v5"] = 5,
+        ["1v1v1"] = 1,
+        ["2v2v2"] = 2
+    }
+
+    local originalPadStates = {}
+    local wasAutoQueueActive = false
+
+    while task.wait(0.2) do
+        if not STATE.AutoQueue or not STATE.Master then 
+            if wasAutoQueueActive then
+                wasAutoQueueActive = false
+                for pad, state in pairs(originalPadStates) do
+                    if pad and pad.Parent then
+                        pad.Color = state.Color
+                        pad.Transparency = state.Transparency
+                    end
+                end
+            end
+            continue 
+        end
+        
+        wasAutoQueueActive = true
+
+        local lpChar = LocalPlayer.Character
+        if not lpChar then continue end
+        local r = lpChar:FindFirstChild("HumanoidRootPart")
+        local h = lpChar:FindFirstChild("Humanoid")
+        if not r or not h or h.Health <= 0 then continue end
+
+        local inLobby = false
+        pcall(function()
+            local spawn = workspace.Lobby.Hub.Important.Center.Spawn
+            if (r.Position - spawn.Position).Magnitude <= 125 then
+                inLobby = true
+            end
+        end)
+        if not inLobby then continue end
+
+        local validMap = false
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and obj:FindFirstChild("Spectate") and obj:FindFirstChild("Primary") then
+                local p = obj.PrimaryPart or obj:FindFirstChild("Primary")
+                if p and (r.Position - p.Position).Magnitude < 400 then
+                    validMap = true
+                    break
+                end
+            end
+        end
+
+        if validMap then continue end
+
+        local function countPlayers(pad)
+            local ct = 0
+            if not pad then return 0 end
+            for _, plyr in ipairs(Players:GetPlayers()) do
+                if plyr ~= LocalPlayer and plyr.Character and plyr.Character:FindFirstChild("Humanoid") and plyr.Character.Humanoid.Health > 0 then
+                    local pr = plyr.Character:FindFirstChild("HumanoidRootPart")
+                    if pr and (pr.Position - pad.Position).Magnitude <= 10 then
+                        ct = ct + 1
+                    end
+                end
+            end
+            return ct
+        end
+
+        local e = {}
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("BasePart") and (v.Name == "Team1" or v.Name == "Team2") then
+                local p = v.Parent
+                if p and p.Name == "Important" then
+                    local p2 = p.Parent
+                    if p2 then
+                        local m = modeMap[p2.Name]
+                        if m then
+                            if not originalPadStates[v] then
+                                originalPadStates[v] = { Color = v.Color, Transparency = v.Transparency }
+                            end
+
+                            local c = countPlayers(v)
+                            local filled = false
+                            if m == "1v1" then
+                                filled = c > 0
+                            else
+                                filled = c >= (modeCaps[m] or math.huge)
+                            end
+
+                            v.Transparency = 0.5
+                            if filled then
+                                v.Color = Color3.fromRGB(255, 0, 0)
+                            else
+                                v.Color = Color3.fromRGB(0, 255, 0)
+                                if m == STATE.AutoQueueMode then
+                                    local siblingName = (v.Name == "Team1") and "Team2" or "Team1"
+                                    local sibling = p:FindFirstChild(siblingName)
+                                    local siblingAmt = countPlayers(sibling)
+                                    table.insert(e, {pad = v, prio = siblingAmt * 10 + c})
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if #e > 0 then
+            table.sort(e, function(a, b) return a.prio > b.prio end)
+            local targetPad = e[1].pad
+            if (r.Position - targetPad.Position).Magnitude > 8 then
+                r.CFrame = targetPad.CFrame + Vector3.new(0, 3, 0)
+            end
+        end
+    end
+end)
+
+local function loadConfig()
+    if not (readfile and isfile) or not isfile(CONFIG_FILE) then return end
+    local ok, raw = pcall(readfile, CONFIG_FILE)
+    if not ok then return end
+    local ok2, parsed = pcall(function() return HttpService:JSONDecode(raw) end)
+    if not ok2 or type(parsed) ~= "table" then return end
+    for _, k in ipairs(SAVEABLE_KEYS) do
+        if parsed[k] ~= nil then STATE[k] = parsed[k] end
+    end
+end
+
+loadConfig()
+STATE.AimKey = AIM_KEYBIND_MAP[STATE.AimKeyName]
+local function isMapModel(obj)
+    return obj:IsA("Model") and obj:FindFirstChild("Spectate") and obj:FindFirstChild("Primary")
+end
+
+local function performClick()
+    if mouse1click then
+        mouse1click()
+    elseif mouse1press then
+        mouse1press()
+        task.wait(0.01)
+        if mouse1release then mouse1release() end
+    else
+        local vim = game:GetService("VirtualInputManager")
+        local cam = workspace.CurrentCamera
+        vim:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, true, game, 1)
+        task.wait(0.01)
+        vim:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, false, game, 1)
+    end
+end
+
+local function performCameraMove(dx, dy)
+    if mousemoverel then
+        mousemoverel(dx, dy)
+    else
+        local cam = workspace.CurrentCamera
+        local fovX = math.rad(cam.FieldOfView)
+        local rotY = -(dx / cam.ViewportSize.X) * fovX
+        local rotX = -(dy / cam.ViewportSize.X) * fovX
+        local cx, cy, cz = cam.CFrame:ToEulerAnglesYXZ()
+        local newX = math.clamp(cx + rotX, -math.rad(89), math.rad(89))
+        local newY = cy + rotY
+        cam.CFrame = CFrame.new(cam.CFrame.Position) * CFrame.Angles(0, newY, 0) * CFrame.Angles(newX, 0, 0)
+    end
+end
+
+local _cachedPivot = CFrame.new(0, 0, 0)
+local _lastPivotUpdate = 0
+local function getActiveMapPivot()
+    if tick() - _lastPivotUpdate > 2 then
+        _lastPivotUpdate = tick()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if isMapModel(obj) then _cachedPivot = obj:GetPivot(); break end
+        end
+    end
+    return _cachedPivot
+end
+
+local _cachedTargets = {}
+local _lastTargetUpdate = 0
+local function getTargets()
+    local targets = {}
+    for _, p in ipairs(Players:GetPlayers()) do targets[#targets + 1] = p end
+    if STATE.TargetNPCs then
+        if tick() - _lastTargetUpdate > 1 then
+            _lastTargetUpdate = tick()
+            local npcList = {}
+            local playerMap = {}
+            for _, p in ipairs(targets) do
+                if p.Character then playerMap[p.Character] = true end
+                playerMap[p.Name] = true
+            end
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then
+                    if not playerMap[obj] and not playerMap[obj.Name] then
+                        npcList[#npcList + 1] = {
+                            Name = obj.Name, Character = obj, IsNPC = true, UserId = -1
+                        }
+                    end
+                end
+            end
+            _cachedTargets = npcList
+        end
+        for _, npc in ipairs(_cachedTargets) do targets[#targets + 1] = npc end
+    end
+    return targets
+end
+
+local function getCharacter(player)
+    local char = player.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then return char end
+    local entities = workspace:FindFirstChild("Assets")
+        and workspace.Assets:FindFirstChild("Temp")
+        and workspace.Assets.Temp:FindFirstChild("Entities")
+    if entities then
+        for _, ent in ipairs(entities:GetChildren()) do
+            if ent.Name == player.Name and ent:FindFirstChild("HumanoidRootPart") then
+                return ent
+            end
+        end
+    end
+    return char
+end
+
+local function isAlive(player)
+    local char = getCharacter(player)
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    return hum ~= nil and hum.Health > 0
+end
+
+local function worldToScreen(pos)
+    local vec, onScreen = Camera:WorldToViewportPoint(pos)
+    return Vector2.new(vec.X, vec.Y), onScreen, vec.Z
+end
+
+local function isVisible(part)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local localChar = LocalPlayer.Character
+    params.FilterDescendantsInstances = localChar and { localChar } or {}
+    local origin = Camera.CFrame.Position
+    local result = workspace:Raycast(origin, part.Position - origin, params)
+    return not result or result.Instance:IsDescendantOf(part.Parent)
+end
+
+local function getDistance(player)
+    local char    = getCharacter(player)
+    local lChar   = LocalPlayer.Character
+    if not char or not lChar then return math.huge end
+    local r1 = char:FindFirstChild("HumanoidRootPart")
+    local r2 = lChar:FindFirstChild("HumanoidRootPart")
+    if not r1 or not r2 then return math.huge end
+    return (r1.Position - r2.Position).Magnitude
+end
+
+local teammateCache = {}
+
+local function isTeammate(player)
+    if not player then return false end
+    if player.IsNPC then return false end
+    local character = player.Character
+    if character and character:FindFirstChild("HumanoidRootPart")
+        and character.HumanoidRootPart:FindFirstChild("TeammateLabel") then
+        return true
+    end
+    return false
+end
+
+local function isEnemy(player)
+    if not STATE.TeamCheck then return true end
+    return not isTeammate(player)
+end
+
+local _rbColor = Color3.new(1, 1, 1)
+local function getRainbow(offset)
+    return Color3.fromHSV((tick() * 0.15 + (offset or 0)) % 1, 1, 1)
+end
+local function visualColor(r, g, b)
+    return STATE.RainbowVisuals and _rbColor or Color3.fromRGB(r, g, b)
+end
+-- ─── Targeting ──────────────────────────────────────────────────────────────
+
+local function getClosestInFOV(fovLimit)
+    local center  = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local closest, closestDist = nil, fovLimit or STATE.AimFOV
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer or not isAlive(player) or not isEnemy(player) then continue end
+        local char = getCharacter(player)
+        if not char then continue end
+        local part = char:FindFirstChild(STATE.AimPart) or char:FindFirstChild("Head")
+        if not part then continue end
+        local screenPos, onScreen = worldToScreen(part.Position)
+        if not onScreen then continue end
+        if STATE.AimVisibleOnly and not isVisible(part) then continue end
+        if STATE.AimMaxDistance > 0 and getDistance(player) > STATE.AimMaxDistance then continue end
+        local dist = (screenPos - center).Magnitude
+        if dist < closestDist then closest = player; closestDist = dist end
+    end
+    return closest
+end
+
+local function getSilentAimTarget()
+    local center  = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local closest, closestDist = nil, math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer or not isAlive(player) or not isEnemy(player) then continue end
+        local char = getCharacter(player)
+        if not char then continue end
+        local part = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+        if not part then continue end
+        local screenPos, _, depth = worldToScreen(part.Position)
+        if depth <= 0 then continue end
+        local dist = (screenPos - center).Magnitude
+        if dist < closestDist then closest = player; closestDist = dist end
+    end
+    return closest
+end
+
+-- ─── Combat ─────────────────────────────────────────────────────────────────
+
+local function aimAt(target, bypassSmooth)
+    local char = getCharacter(target)
+    if not char then return end
+
+    local part = char:FindFirstChild(STATE.AimPart)
+    if STATE.AimPart == "Head" then
+        part = char:FindFirstChild("HitboxHeadSmall") or part
+    end
+    if not part then part = char:FindFirstChild("Head") end
+    if not part then return end
+
+    if STATE.AimMethod == "Camera" then
+        local cameraPos = Camera.CFrame.Position
+        local targetPos = part.Position
+        local targetCFrame = CFrame.new(cameraPos, targetPos)
+        local smoothFactor = bypassSmooth and 0 or (math.clamp(STATE.AimSmoothness, 1, 20) / 20)
+        local lerpFactor = 1 - smoothFactor
+        if lerpFactor < 0.05 and not bypassSmooth then lerpFactor = 0.05 end
+        local smoothedCFrame = Camera.CFrame:Lerp(targetCFrame, lerpFactor)
+
+        pcall(function()
+            local CameraController = require(LocalPlayer.PlayerScripts.Controllers.CameraController)
+            CameraController.Rotation = Vector2.new(smoothedCFrame:ToEulerAnglesYXZ())
+            local Utility = require(ReplicatedStorage.Modules.Utility)
+            local encoded = Utility:EncodeCameraRotation(CameraController.Rotation)
+            ReplicatedStorage.Remotes.Replication.Fighter.UpdateCameraRotation:FireServer(encoded, nil)
+        end)
+    else
+        local screenPos, onScreen = worldToScreen(part.Position)
+        if not onScreen and not bypassSmooth then return end
+        local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        local smooth = bypassSmooth and 1 or math.max(STATE.AimSmoothness * 0.1, 0.05)
+        local move   = (screenPos - center) / smooth
+        if STATE.AimHumanize and not bypassSmooth then move = move + Vector2.new(math.random(-2, 2), math.random(-2, 2)) end
+        if performCameraMove then performCameraMove(math.floor(move.X), math.floor(move.Y))
+        elseif mousemoverel then mousemoverel(math.floor(move.X), math.floor(move.Y)) end
+    end
+end
+
+local _lastTrigger = 0
+local function runTriggerbot()
+    if not STATE.Triggerbot then return end
+    local now = tick() * 1000
+    if now - _lastTrigger < STATE.TriggerbotDelay then return end
+    local target = getClosestInFOV(15)
+    if not target then return end
+    local char = getCharacter(target)
+    if not char then return end
+    local part = char:FindFirstChild(STATE.AimPart) or char:FindFirstChild("Head")
+    if not part then return end
+    local screenPos, onScreen = worldToScreen(part.Position)
+    if not onScreen then return end
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    if (screenPos - center).Magnitude < 15 then
+        if performClick then task.spawn(performClick) elseif mouse1click then mouse1click() end
+        _lastTrigger = now
+    end
+end
+
+local _isHoldingClick = false
+task.spawn(function()
+    while task.wait(0.05) do
+        local want = STATE.Master and STATE.AutoClick
+            and LocalPlayer.Character
+            and LocalPlayer.Character:FindFirstChild("Humanoid")
+        if want then
+            if not _isHoldingClick then pcall(mouse1press); _isHoldingClick = true end
+        elseif _isHoldingClick then
+            pcall(mouse1release); _isHoldingClick = false
+        end
+    end
+end)
+
+-- ─── Weapons ────────────────────────────────────────────────────────────────
+
+local ItemLibrary, OriginalItemData = nil, {}
+task.defer(function()
+    pcall(function()
+        if game.GameId == 6035872082 then
+            ItemLibrary = require(ReplicatedStorage.Modules.ItemLibrary).Items
+        end
+    end)
+    if type(ItemLibrary) == "table" then
+        for name, data in pairs(ItemLibrary) do
+            if type(data) == "table" then
+                OriginalItemData[name] = {
+                    ShootSpread = data.ShootSpread, ShootAccuracy = data.ShootAccuracy,
+                    ShootRecoil = data.ShootRecoil, AttackCooldown = data.AttackCooldown,
+                    SwingCooldown = data.SwingCooldown, MeleeCooldown = data.MeleeCooldown,
+                    Cooldown = data.Cooldown, RecoveryTime = data.RecoveryTime,
+                    ResetTime = data.ResetTime, ShootCooldown = data.ShootCooldown,
+                    ShootBurstCooldown = data.ShootBurstCooldown,
+                }
+            end
+        end
+    end
+end)
+
+local function applyFastWeapons()
+    if type(ItemLibrary) ~= "table" then return end
+    local cd = math.max(STATE.FireRate, 0.001)
+    for _, data in pairs(ItemLibrary) do
+        if type(data) == "table" then
+            data.ShootSpread = 0; data.ShootAccuracy = 0; data.ShootRecoil = 0
+            data.AttackCooldown = cd; data.SwingCooldown = cd; data.MeleeCooldown = cd
+            data.Cooldown = cd; data.RecoveryTime = cd; data.ResetTime = cd
+            data.ShootCooldown = cd; data.ShootBurstCooldown = cd
+        end
+    end
+end
+
+local function restoreItemLibrary()
+    if type(ItemLibrary) ~= "table" then return end
+    for name, data in pairs(ItemLibrary) do
+        local orig = OriginalItemData[name]
+        if orig then for k, v in pairs(orig) do data[k] = v end end
+    end
+end
+
+-- ─── Movement ───────────────────────────────────────────────────────────────
+
+local origHumStats = { WalkSpeed = 16, JumpPower = 50 }
+
+local function hookHumanoid(hum)
+    origHumStats.WalkSpeed = hum.WalkSpeed
+    origHumStats.JumpPower = hum.JumpPower
+    hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+        if STATE.WalkSpeedEnabled and STATE.Master and hum.WalkSpeed ~= STATE.WalkSpeed then
+            hum.WalkSpeed = STATE.WalkSpeed
+        end
+    end)
+    hum:GetPropertyChangedSignal("JumpPower"):Connect(function()
+        if STATE.JumpPowerEnabled and STATE.Master and hum.JumpPower ~= STATE.JumpPower then
+            hum.JumpPower = STATE.JumpPower
+        end
+    end)
+    if STATE.WalkSpeedEnabled and STATE.Master then hum.WalkSpeed = STATE.WalkSpeed end
+    if STATE.JumpPowerEnabled and STATE.Master then hum.JumpPower = STATE.JumpPower end
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    _isHoldingClick = false
+    local hum = char:WaitForChild("Humanoid", 5)
+    if hum then hookHumanoid(hum) end
+end)
+if LocalPlayer.Character then
+    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if hum then hookHumanoid(hum) end
+end
+
+UserInputService.JumpRequest:Connect(function()
+    if STATE.Master and STATE.InfJump and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChild("Humanoid")
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if STATE.TPToCursor and STATE.Master and input.KeyCode == Enum.KeyCode.T then
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            local mouse = LocalPlayer:GetMouse()
+            if mouse.Hit then char.HumanoidRootPart.CFrame = mouse.Hit + Vector3.new(0, 3, 0) end
+        end
+    end
+    if STATE.Aimbot and STATE.Master then
+        if typeof(STATE.AimKey) == "EnumItem"
+            and (input.UserInputType == STATE.AimKey or input.KeyCode == STATE.AimKey) then
+            if STATE.AimMode == "Toggle" then
+                STATE.AimActive = not STATE.AimActive
+            else
+                STATE.AimActive = true
+            end
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if STATE.Aimbot and STATE.Master and STATE.AimMode == "Hold" then
+        if typeof(STATE.AimKey) == "EnumItem"
+            and (input.UserInputType == STATE.AimKey or input.KeyCode == STATE.AimKey) then
+            STATE.AimActive = false
+        end
+    end
+end)
+
+-- ─── Drawing helpers ─────────────────────────────────────────────────────────
+
+local function newDrawing(kind, props)
+    if not Drawing then return nil end
+    local d = Drawing.new(kind)
+    for k, v in pairs(props) do d[k] = v end
+    return d
+end
+
+local function removeDrawing(d)
+    if d then pcall(function() d:Remove() end) end
+end
+
+local SKELETON_CONNECTIONS = {
+    {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"},
+    {"UpperTorso","RightUpperArm"}, {"RightUpperArm","RightLowerArm"}, {"RightLowerArm","RightHand"},
+    {"UpperTorso","LeftUpperArm"},  {"LeftUpperArm","LeftLowerArm"},  {"LeftLowerArm","LeftHand"},
+    {"LowerTorso","RightUpperLeg"}, {"RightUpperLeg","RightLowerLeg"}, {"RightLowerLeg","RightFoot"},
+    {"LowerTorso","LeftUpperLeg"},  {"LeftUpperLeg","LeftLowerLeg"},  {"LeftLowerLeg","LeftFoot"},
+}
+
+-- ─── FOV Circle & Target Line ────────────────────────────────────────────────
+
+local FOVCircle = newDrawing("Circle", {
+    Thickness = 1, NumSides = 64, Filled = false,
+    Transparency = 0.7, Color = Color3.fromRGB(200,200,200), Visible = false,
+})
+local TargetLineDrawing = newDrawing("Line", {
+    Thickness = 2, Color = Color3.fromRGB(255,50,50), Transparency = 1, Visible = false,
+})
+
+-- ─── ESP ─────────────────────────────────────────────────────────────────────
+
+local ESP_OBJECTS = {}
+
+local function setupESP(player)
+    if not Drawing or player == LocalPlayer then return end
+    local skeletonLines = {}
+    for i = 1, #SKELETON_CONNECTIONS do
+        skeletonLines[i] = newDrawing("Line", { Thickness = 1, Color = Color3.new(1,1,1), Transparency = 1 })
+    end
+    local cornerLines = {}
+    for i = 1, 8 do
+        cornerLines[i] = newDrawing("Line", { Thickness = 1.5, Color = Color3.fromRGB(240,240,240) })
+    end
+    ESP_OBJECTS[player] = {
+        Box        = newDrawing("Square", { Color = Color3.fromRGB(240,240,240), Thickness = 1, Filled = false }),
+        BoxFill    = newDrawing("Square", { Color = Color3.fromRGB(240,240,240), Thickness = 0, Filled = true, Transparency = 0.7, Visible = false }),
+        CornerLines= cornerLines,
+        Tracer     = newDrawing("Line",   { Color = Color3.fromRGB(200,200,200), Thickness = 1 }),
+        Name       = newDrawing("Text",   { Color = Color3.new(1,1,1), Size = 13, Center = true, Outline = true }),
+        DistText   = newDrawing("Text",   { Color = Color3.fromRGB(200,200,200), Size = 12, Center = true, Outline = true }),
+        LevelText  = newDrawing("Text",   { Color = Color3.fromRGB(200,200,200), Size = 12, Center = true, Outline = true }),
+        WinText    = newDrawing("Text",   { Color = Color3.fromRGB(200,200,200), Size = 12, Center = true, Outline = true }),
+        HealthBG   = newDrawing("Line",   { Thickness = 4, Color = Color3.fromRGB(15,15,15) }),
+        HealthSegs = (function()
+            local segs = {}
+            for i = 1, 20 do
+                local t = (i - 1) / 19
+                segs[i] = newDrawing("Line", { Thickness = 3, Color = Color3.fromRGB(math.floor(255*t), math.floor(255*(1-t)), 0) })
+            end
+            return segs
+        end)(),
+        Skeleton   = skeletonLines,
+    }
+end
+
+local function hideAll(obj)
+    obj.Box.Visible      = false; obj.BoxFill.Visible   = false
+    obj.Tracer.Visible   = false; obj.Name.Visible      = false
+    obj.DistText.Visible = false; obj.LevelText.Visible = false
+    obj.WinText.Visible  = false; obj.HealthBG.Visible  = false
+    for _, ln in ipairs(obj.CornerLines) do ln.Visible = false end
+    for _, ln in ipairs(obj.HealthSegs)  do ln.Visible = false end
+    for _, ln in ipairs(obj.Skeleton)    do ln.Visible = false end
+end
+
+local function removeESP(player)
+    local obj = ESP_OBJECTS[player]
+    if not obj then return end
+    for _, v in pairs(obj) do
+        if type(v) == "table" then
+            for _, ln in ipairs(v) do pcall(function() ln:Remove() end) end
+        else
+            pcall(function() v:Remove() end)
+        end
+    end
+    ESP_OBJECTS[player] = nil
+end
+
+local function updateESP(player)
+    local obj = ESP_OBJECTS[player]
+    if not obj then return end
+
+    local char = player.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    local active = STATE.ESP and STATE.Master and isEnemy(player)
+        and hrp and hum and hum.Health > 0
+
+    if not active then hideAll(obj); return end
+
+    local hrpPos, onScreen, depth = worldToScreen(hrp.Position)
+    local dist = getDistance(player)
+
+    if not onScreen or depth <= 0 or dist > STATE.ESPMaxDistance then hideAll(obj); return end
+
+    local topScreen  = worldToScreen(hrp.Position + Vector3.new(0, 3.1, 0))
+    local footScreen = worldToScreen(hrp.Position - Vector3.new(0, 3.0, 0))
+    local height     = math.max(math.abs(footScreen.Y - topScreen.Y), 2)
+    local width      = height * 0.55
+    local espClr     = visualColor(STATE.ESPColorR,       STATE.ESPColorG,       STATE.ESPColorB)
+    local boxClr     = visualColor(STATE.ESPBoxColorR,    STATE.ESPBoxColorG,    STATE.ESPBoxColorB)
+    local tracerClr  = visualColor(STATE.ESPTracerColorR, STATE.ESPTracerColorG, STATE.ESPTracerColorB)
+    local nameClr    = visualColor(STATE.ESPNameColorR,   STATE.ESPNameColorG,   STATE.ESPNameColorB)
+    local centerX    = hrpPos.X
+    local left       = centerX - width/2
+    local right      = centerX + width/2
+    local top        = topScreen.Y
+    local bot        = footScreen.Y
+
+    local style      = STATE.ESPBoxStyle
+    local showFull   = style == "Full Box"
+    local showCorner = style == "Corner Box"
+    local espFont    = Drawing.Fonts[STATE.ESPFont] or Drawing.Fonts.UI
+    local espSize    = STATE.ESPTextSize
+
+    obj.Box.Visible = showFull
+    if showFull then
+        obj.Box.Size     = Vector2.new(width, height)
+        obj.Box.Position = Vector2.new(left, top)
+        obj.Box.Color    = boxClr
+    end
+
+    obj.BoxFill.Visible = showFull and STATE.ESPBoxFill
+    if obj.BoxFill.Visible then
+        obj.BoxFill.Size     = Vector2.new(width, height)
+        obj.BoxFill.Position = Vector2.new(left, top)
+        obj.BoxFill.Color    = boxClr
+    end
+
+    -- corner box: 8 lines (4 corners × horizontal + vertical arm), length = 25% of dimension
+    local cx = width  * 0.25
+    local cy = height * 0.25
+    local corners = {
+        { Vector2.new(left,  top), Vector2.new(left + cx, top),  Vector2.new(left,  top + cy)  },
+        { Vector2.new(right, top), Vector2.new(right - cx, top), Vector2.new(right, top + cy)  },
+        { Vector2.new(left,  bot), Vector2.new(left + cx, bot),  Vector2.new(left,  bot - cy)  },
+        { Vector2.new(right, bot), Vector2.new(right - cx, bot), Vector2.new(right, bot - cy)  },
+    }
+    local li = 1
+    for _, c in ipairs(corners) do
+        obj.CornerLines[li].From    = c[1]; obj.CornerLines[li].To    = c[2]
+        obj.CornerLines[li].Color   = boxClr; obj.CornerLines[li].Visible = showCorner
+        obj.CornerLines[li+1].From  = c[1]; obj.CornerLines[li+1].To  = c[3]
+        obj.CornerLines[li+1].Color = boxClr; obj.CornerLines[li+1].Visible = showCorner
+        li = li + 2
+    end
+
+    obj.Tracer.Visible = STATE.ESPTracer
+    if STATE.ESPTracer then
+        obj.Tracer.From  = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
+        obj.Tracer.To    = Vector2.new(centerX, bot)
+        obj.Tracer.Color = tracerClr
+    end
+
+    local nameOffset = espSize + 2
+    obj.Name.Visible = STATE.ESPName
+    if STATE.ESPName then
+        obj.Name.Text     = STATE.StreamingMode and STATE.StreamingAlias or player.DisplayName
+        obj.Name.Size     = espSize
+        obj.Name.Font     = espFont
+        obj.Name.Position = Vector2.new(centerX, top - nameOffset)
+        obj.Name.Color    = nameClr
+    end
+
+    -- below-box text stack: distance, level, win streak
+    local belowOffset = 3
+    local smallSize   = math.max(espSize - 1, 8)
+    obj.DistText.Visible = STATE.ESPDistance
+    if STATE.ESPDistance then
+        obj.DistText.Text     = math.floor(dist) .. "m"
+        obj.DistText.Size     = smallSize
+        obj.DistText.Font     = espFont
+        obj.DistText.Position = Vector2.new(centerX, bot + belowOffset)
+        obj.DistText.Color    = espClr
+        belowOffset = belowOffset + smallSize + 2
+    end
+
+    local cls = player:FindFirstChild("CustomLeaderstats")
+    obj.LevelText.Visible = STATE.ESPLevel
+    if STATE.ESPLevel then
+        local lvlVal = cls and cls:FindFirstChild("Level")
+        obj.LevelText.Text     = "Lv " .. (lvlVal and lvlVal.Value or "?")
+        obj.LevelText.Size     = smallSize
+        obj.LevelText.Font     = espFont
+        obj.LevelText.Position = Vector2.new(centerX, bot + belowOffset)
+        obj.LevelText.Color    = espClr
+        belowOffset = belowOffset + smallSize + 2
+    end
+
+    obj.WinText.Visible = STATE.ESPWinStreak
+    if STATE.ESPWinStreak then
+        local wsVal = cls and cls:FindFirstChild("Win Streak")
+        obj.WinText.Text     = "W " .. (wsVal and wsVal.Value or "?")
+        obj.WinText.Size     = smallSize
+        obj.WinText.Font     = espFont
+        obj.WinText.Position = Vector2.new(centerX, bot + belowOffset)
+        obj.WinText.Color    = espClr
+    end
+
+    -- health bar: 20-segment gradient, top=green (index 1) to bottom=red (index 20)
+    -- segments cover the entire bar height; only filled portion (top health%) is shown
+    if STATE.ESPHealthBar then
+        local ratio   = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+        local barX    = left - 6
+        local segH    = height / 20
+        local filledY = bot - height * ratio  -- screen Y where fill starts (above = unfilled)
+        obj.HealthBG.From    = Vector2.new(barX, top)
+        obj.HealthBG.To      = Vector2.new(barX, bot)
+        obj.HealthBG.Visible = true
+        for i, seg in ipairs(obj.HealthSegs) do
+            local segTop = top + (i - 1) * segH
+            local segBot = segTop + segH
+            if segBot >= filledY then
+                seg.From    = Vector2.new(barX, math.max(segTop, filledY))
+                seg.To      = Vector2.new(barX, segBot)
+                seg.Visible = true
+            else
+                seg.Visible = false
+            end
+        end
+    else
+        obj.HealthBG.Visible = false
+        for _, seg in ipairs(obj.HealthSegs) do seg.Visible = false end
+    end
+
+    if STATE.ESPSkeleton then
+        for i, conn in ipairs(SKELETON_CONNECTIONS) do
+            local p1 = char:FindFirstChild(conn[1])
+            local p2 = char:FindFirstChild(conn[2])
+            local ln = obj.Skeleton[i]
+            if p1 and p2 then
+                local s1, on1 = worldToScreen(p1.Position)
+                local s2, on2 = worldToScreen(p2.Position)
+                ln.Visible = on1 or on2
+                if ln.Visible then ln.From = s1; ln.To = s2; ln.Color = espClr end
+            else
+                ln.Visible = false
+            end
+        end
+    else
+        for _, ln in ipairs(obj.Skeleton) do ln.Visible = false end
+    end
+end
+
+for _, p in ipairs(Players:GetPlayers()) do if p ~= LocalPlayer then setupESP(p) end end
+Players.PlayerAdded:Connect(setupESP)
+Players.PlayerRemoving:Connect(removeESP)
+
+-- ─── Chams ───────────────────────────────────────────────────────────────────
+
+local CHAMS_OBJECTS = {}
+
+local function applyChams(player, char)
+    task.defer(function()
+        if not char or not char.Parent then return end
+        for _, v in ipairs(char:GetChildren()) do
+            if v:IsA("Highlight") and v.Name == "_RR_Chams" then pcall(function() v:Destroy() end) end
+        end
+        local hl = Instance.new("Highlight")
+        hl.Name = "_RR_Chams"
+        hl.FillColor = Color3.fromRGB(STATE.ChamsR, STATE.ChamsG, STATE.ChamsB)
+        hl.OutlineTransparency = 1; hl.FillTransparency = 0.5
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Enabled = STATE.ChamsESP and STATE.Master
+        hl.Parent = char
+        if CHAMS_OBJECTS[player] then CHAMS_OBJECTS[player].hl = hl end
+    end)
+end
+
+local function setupChams(player)
+    if player == LocalPlayer then return end
+    local old = CHAMS_OBJECTS[player]
+    if old and old.conn then pcall(function() old.conn:Disconnect() end) end
+    CHAMS_OBJECTS[player] = {}
+    if player.Character then applyChams(player, player.Character) end
+    CHAMS_OBJECTS[player].conn = player.CharacterAdded:Connect(function(char)
+        applyChams(player, char)
+    end)
+end
+
+local function cleanupChams(player)
+    local data = CHAMS_OBJECTS[player]
+    if not data then return end
+    pcall(function()
+        if data.conn then data.conn:Disconnect() end
+        if data.hl and data.hl.Parent then data.hl:Destroy() end
+    end)
+    CHAMS_OBJECTS[player] = nil
+end
+
+for _, p in ipairs(Players:GetPlayers()) do setupChams(p) end
+Players.PlayerAdded:Connect(setupChams)
+Players.PlayerRemoving:Connect(cleanupChams)
+
+-- ─── Bullet Visuals ──────────────────────────────────────────────────────────
+
+local function cloneBeam(beam)
+    if not STATE.BulletTracers or not STATE.Master then return end
+    if beam:GetAttribute("IsClone") or not beam.Attachment0 or not beam.Attachment1 then return end
+    local att0, att1 = beam.Attachment0:Clone(), beam.Attachment1:Clone()
+    att0.Parent = workspace.Terrain; att1.Parent = workspace.Terrain
+    local clone = beam:Clone()
+    clone:SetAttribute("IsClone", true)
+    clone.Color = ColorSequence.new(Color3.fromRGB(STATE.TracerR, STATE.TracerG, STATE.TracerB))
+    clone.LightEmission = 0; clone.Transparency = NumberSequence.new(0.4)
+    clone.Attachment0 = att0; clone.Attachment1 = att1; clone.Parent = workspace
+    Debris:AddItem(clone, 2); Debris:AddItem(att0, 2); Debris:AddItem(att1, 2)
+end
+
+local function cloneImpact(original)
+    if not STATE.ImpactMarkers or not STATE.Master then return end
+    local clone = original:Clone()
+    pcall(function()
+        local color = Color3.fromRGB(STATE.ImpactR, STATE.ImpactG, STATE.ImpactB)
+        if clone:IsA("BasePart") then clone.Color = color end
+        for _, v in ipairs(clone:GetDescendants()) do
+            if v:IsA("BasePart") then v.Color = color
+            elseif v:IsA("Beam") then v.Color = ColorSequence.new(color)
+            elseif v:IsA("ParticleEmitter") then v.Color = ColorSequence.new(color) end
+        end
+    end)
+    clone:SetAttribute("IsClone", true); clone.Parent = workspace
+    task.delay(2, function() pcall(function() clone:Destroy() end) end)
+end
+
+local function processBulletObj(obj)
+    if obj:IsA("Beam") then
+        pcall(cloneBeam, obj)
+    elseif obj.Name == "ImpactMarkerBullet" and not obj:GetAttribute("IsClone") then
+        pcall(cloneImpact, obj)
+    end
+end
+
+workspace.DescendantAdded:Connect(function(obj) task.defer(processBulletObj, obj) end)
+
+-- ─── Aim Trajectory ──────────────────────────────────────────────────────────
+
+local TRAJ_DATA       = {}
+local TRAJ_MAX_PTS    = 15
+local TRAJ_SUBSEG     = 5
+local TRAJ_INTERVAL   = 1/30
+local TRAJ_LINE_POOL  = {}
+local TRAJ_LINES_USED = 0
+local TRAJ_MAX_LINES  = 250
+local _trajAccum      = 0
+
+local function catmullV2(p0, p1, p2, p3, t)
+    local t2, t3 = t*t, t*t*t
+    return 0.5 * ((2*p1) + (-p0+p2)*t + (2*p0-5*p1+4*p2-p3)*t2 + (-p0+3*p1-3*p2+p3)*t3)
+end
+
+local function getTrajLine(idx)
+    if not Drawing or idx > TRAJ_MAX_LINES then return nil end
+    if not TRAJ_LINE_POOL[idx] then
+        TRAJ_LINE_POOL[idx] = newDrawing("Line", { Thickness = 2.5, Visible = false })
+    end
+    return TRAJ_LINE_POOL[idx]
+end
+
+local function setupTrajectory(player) TRAJ_DATA[player] = { points = {} } end
+local function cleanupTrajectory(player) TRAJ_DATA[player] = nil end
+
+for _, p in ipairs(Players:GetPlayers()) do setupTrajectory(p) end
+Players.PlayerAdded:Connect(setupTrajectory)
+Players.PlayerRemoving:Connect(cleanupTrajectory)
+
+-- ─── Crosshair ───────────────────────────────────────────────────────────────
+
+local CROSSHAIR_STYLES = { "emoji", "heart", "star", "soyjack", "trump", "youngSheldon", "quagmire", "portal" }
+local CROSSHAIR_DECALS = {
+    emoji       = "rbxassetid://11765927979",
+    heart       = "rbxassetid://12323570774",
+    star        = "rbxassetid://16161023805",
+    soyjack     = "rbxassetid://12255190358",
+    trump       = "rbxassetid://15476503151",
+    youngSheldon= "rbxassetid://93056170603996",
+    quagmire    = "rbxassetid://11670764807",
+    portal      = "rbxassetid://5669601841",
+}
+-- Base sizes in px at 100% scale — face/portrait decals larger, icon decals smaller
+local CROSSHAIR_SIZE = {
+    emoji       = 48,
+    heart       = 44,
+    star        = 48,
+    soyjack     = 72,
+    trump       = 72,
+    youngSheldon= 72,
+    quagmire    = 72,
+    portal      = 56,
+}
+
+local SPIN_SPEED      = 120
+local _crosshairAngle = 0
+local _chGui          = nil
+local _chImg          = nil
+local _chStyle        = nil  -- last applied style
+
+local function buildCrosshairGui()
+    -- Destroy any leftover
+    if _chGui then pcall(function() _chGui:Destroy() end) end
+    _chGui = nil; _chImg = nil
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name          = "RBCrosshair"
+    gui.ResetOnSpawn  = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder  = 10000
+
+    -- Try gethui() first (protected, won't be cleared by Roblox), then PlayerGui
+    -- Never use WaitForChild here — this runs outside any RunService callback
+    local parented = false
+    if typeof(gethui) == "function" then
+        pcall(function()
+            gui.Parent = gethui()
+            parented = gui.Parent ~= nil
+        end)
+    end
+    if not parented then
+        pcall(function()
+            gui.Parent = game:GetService("CoreGui")
+            parented = gui.Parent ~= nil
+        end)
+    end
+    if not parented then
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if pg then gui.Parent = pg end
+    end
+
+    local img = Instance.new("ImageLabel")
+    img.BackgroundTransparency = 1
+    img.AnchorPoint = Vector2.new(0.5, 0.5)
+    img.Position    = UDim2.fromScale(0.5, 0.5)
+    img.ScaleType   = Enum.ScaleType.Fit
+    img.ZIndex      = 10
+    img.Visible     = false
+    img.Parent      = gui
+
+    _chGui = gui
+    _chImg = img
+end
+
+local _chSize = nil
+
+local function applyCrosshair()
+    if not _chImg then return end
+    local style  = STATE.CrosshairStyle or "emoji"
+    local scale  = (STATE.CrosshairSize or 100) / 100
+    local px     = math.floor((CROSSHAIR_SIZE[style] or 48) * scale)
+    _chStyle = style; _chSize = STATE.CrosshairSize
+    _chImg.Image = CROSSHAIR_DECALS[style] or CROSSHAIR_DECALS.emoji
+    _chImg.Size  = UDim2.fromOffset(px, px)
+end
+
+local function teardownCrosshair()
+    if _chGui then pcall(function() _chGui:Destroy() end) end
+    _chGui = nil; _chImg = nil; _chStyle = nil
+    _crosshairAngle = 0
+end
+
+-- Build the GUI immediately at script load (outside any RunService callback)
+buildCrosshairGui()
+
+-- ─── Fly ─────────────────────────────────────────────────────────────────────
+
+local _flyCleanedUp = true
+
+local function updateFly()
+    local want = STATE.Fly and STATE.Master
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+
+    if not want then
+        if not _flyCleanedUp and root then
+            local bv = root:FindFirstChild("_RR_FlyBV")
+            local bg = root:FindFirstChild("_RR_FlyBG")
+            if bv then bv:Destroy() end
+            if bg then bg:Destroy() end
+        end
+        if hum and hum.PlatformStand then hum.PlatformStand = false end
+        _flyCleanedUp = true
+        return
+    end
+    if not root or not hum then return end
+    _flyCleanedUp = false
+    hum.PlatformStand = true
+
+    local bv = root:FindFirstChild("_RR_FlyBV")
+    if not bv then
+        bv = Instance.new("BodyVelocity"); bv.Name = "_RR_FlyBV"
+        bv.MaxForce = Vector3.new(1e5,1e5,1e5); bv.Velocity = Vector3.zero
+        bv.Parent = root
+    end
+    local bg = root:FindFirstChild("_RR_FlyBG")
+    if not bg then
+        bg = Instance.new("BodyGyro"); bg.Name = "_RR_FlyBG"
+        bg.MaxTorque = Vector3.new(1e5,1e5,1e5); bg.D = 100; bg.P = 1e4
+        bg.Parent = root
+    end
+
+    local camCF = Camera.CFrame
+    local dir   = Vector3.zero
+    local uis   = UserInputService
+    if uis:IsKeyDown(Enum.KeyCode.W)         then dir = dir + camCF.LookVector end
+    if uis:IsKeyDown(Enum.KeyCode.S)         then dir = dir - camCF.LookVector end
+    if uis:IsKeyDown(Enum.KeyCode.A)         then dir = dir - camCF.RightVector end
+    if uis:IsKeyDown(Enum.KeyCode.D)         then dir = dir + camCF.RightVector end
+    if uis:IsKeyDown(Enum.KeyCode.Space)     then dir = dir + Vector3.yAxis end
+    if uis:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.yAxis end
+    bv.Velocity = dir.Magnitude > 0 and (dir.Unit * 50) or Vector3.zero
+    bg.CFrame   = camCF
+end
+
+-- ─── Teleport Queue ──────────────────────────────────────────────────────────
+
+local playerQueue, targetPlayer, currentIndex = {}, nil, 1
+
+local function updateQueue()
+    playerQueue = {}
+    local lChar = LocalPlayer.Character
+    local lRoot = lChar and lChar:FindFirstChild("HumanoidRootPart")
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local hum  = p.Character:FindFirstChild("Humanoid")
+            local root = p.Character:FindFirstChild("HumanoidRootPart")
+            if hum and root and hum.Health > 0 and lRoot
+                and (root.Position - lRoot.Position).Magnitude <= MAX_STUD_DISTANCE then
+                playerQueue[#playerQueue + 1] = p
+            end
+        end
+    end
+    if currentIndex > #playerQueue or #playerQueue == 0 then currentIndex = 1 end
+    targetPlayer = playerQueue[currentIndex]
+end
+
+-- ─── Map Visuals ─────────────────────────────────────────────────────────────
+
+local _origLighting = {
+    ClockTime = Lighting.ClockTime, Brightness = Lighting.Brightness,
+    Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient,
+    FogColor = Lighting.FogColor, FogStart = Lighting.FogStart,
+    FogEnd = Lighting.FogEnd, Technology = Lighting.Technology,
+}
+local _mapVisualsApplied = false
+
+local function clearMapEffects()
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("Atmosphere") or v:IsA("BloomEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("SunRaysEffect") then
+            pcall(function() v:Destroy() end)
+        end
+    end
+end
+
+local function restoreMapVisuals()
+    if not _mapVisualsApplied then return end
+    _mapVisualsApplied = false
+    for k, v in pairs(_origLighting) do pcall(function() Lighting[k] = v end) end
+    for _, name in ipairs({"ArcticAtmosphere","ArcticCC","ArcticBloom","BloodAtmo","BloodCC","BloodBloom",
+        "NeonAtmo","NeonCC","NeonBloom","ToxicAtmo","ToxicCC","HeavenAtmo","HeavenCC","HeavenBloom",
+        "InfernoAtmo","InfernoCC","InfernoBloom","SpaceAtmo","SpaceCC","MatrixAtmo","MatrixCC"}) do
+        local obj = Lighting:FindFirstChild(name); if obj then obj:Destroy() end
+    end
+    local arc = workspace:FindFirstChild("AuroraCeiling"); if arc then arc:Destroy() end
+end
+
+local MAP_PRESETS = {}
+
+MAP_PRESETS["Arctic Night"] = function()
+    clearMapEffects()
+    local old = workspace:FindFirstChild("AuroraCeiling"); if old then old:Destroy() end
+    local Aurora = Instance.new("Part")
+    Aurora.Name = "AuroraCeiling"; Aurora.Anchored = true; Aurora.CanCollide = false
+    Aurora.Transparency = 1; Aurora.Size = Vector3.new(3000,1,3000)
+    Aurora.Position = Vector3.new(0,600,0); Aurora.Parent = workspace
+    local Decal = Instance.new("Decal", Aurora)
+    Decal.Face = Enum.NormalId.Bottom; Decal.Texture = "rbxassetid://9798959206"
+    Lighting.Technology = Enum.Technology.Future
+    Lighting.ClockTime = 22; Lighting.Brightness = 0.9
+    Lighting.Ambient        = Color3.fromRGB(30, 50, 90)
+    Lighting.OutdoorAmbient = Color3.fromRGB(45, 70, 130)
+    Lighting.FogColor = Color3.fromRGB(18, 35, 70); Lighting.FogStart = 600; Lighting.FogEnd = 4000
+    local a = Instance.new("Atmosphere", Lighting); a.Name = "ArcticAtmosphere"
+    a.Density = 0.2; a.Haze = 0.5; a.Glare = 0.01
+    a.Color = Color3.fromRGB(130, 170, 240); a.Decay = Color3.fromRGB(55, 95, 200)
+    local cc = Instance.new("ColorCorrectionEffect", Lighting); cc.Name = "ArcticCC"
+    cc.Brightness = 0; cc.Contrast = 0.2; cc.Saturation = 0.1; cc.TintColor = Color3.fromRGB(200, 215, 255)
+    local bl = Instance.new("BloomEffect", Lighting); bl.Name = "ArcticBloom"
+    bl.Intensity = 0.14; bl.Size = 20; bl.Threshold = 0.94
+end
+
+MAP_PRESETS["Blood Moon"] = function()
+    clearMapEffects()
+    Lighting.Technology = Enum.Technology.Future
+    Lighting.ClockTime = 22; Lighting.Brightness = 1.1
+    Lighting.Ambient        = Color3.fromRGB(100, 18, 18)
+    Lighting.OutdoorAmbient = Color3.fromRGB(140, 28, 28)
+    Lighting.FogColor = Color3.fromRGB(55, 8, 8); Lighting.FogStart = 200; Lighting.FogEnd = 1100
+    local a = Instance.new("Atmosphere", Lighting); a.Name = "BloodAtmo"
+    a.Density = 0.24; a.Haze = 2.0; a.Glare = 0.04
+    a.Color = Color3.fromRGB(180, 22, 22); a.Decay = Color3.fromRGB(80, 5, 5)
+    local cc = Instance.new("ColorCorrectionEffect", Lighting); cc.Name = "BloodCC"
+    cc.Brightness = 0.04; cc.Contrast = 0.28; cc.Saturation = 0.5; cc.TintColor = Color3.fromRGB(255, 105, 105)
+    local bl = Instance.new("BloomEffect", Lighting); bl.Name = "BloodBloom"
+    bl.Intensity = 0.5; bl.Size = 30; bl.Threshold = 0.85
+end
+
+MAP_PRESETS["Neon Void"] = function()
+    clearMapEffects()
+    Lighting.Technology = Enum.Technology.Future
+    Lighting.ClockTime = 2; Lighting.Brightness = 0.85
+    Lighting.Ambient        = Color3.fromRGB(12, 35, 75)
+    Lighting.OutdoorAmbient = Color3.fromRGB(18, 50, 115)
+    Lighting.FogColor = Color3.fromRGB(5, 15, 45); Lighting.FogStart = 130; Lighting.FogEnd = 700
+    local a = Instance.new("Atmosphere", Lighting); a.Name = "NeonAtmo"
+    a.Density = 0.3; a.Haze = 0.9; a.Glare = 0
+    a.Color = Color3.fromRGB(20, 100, 230); a.Decay = Color3.fromRGB(5, 28, 100)
+    local cc = Instance.new("ColorCorrectionEffect", Lighting); cc.Name = "NeonCC"
+    cc.Brightness = 0.02; cc.Contrast = 0.42; cc.Saturation = 1.2; cc.TintColor = Color3.fromRGB(60, 175, 255)
+    local bl = Instance.new("BloomEffect", Lighting); bl.Name = "NeonBloom"
+    bl.Intensity = 1.3; bl.Size = 42; bl.Threshold = 0.56
+end
+
+MAP_PRESETS["Toxic Wasteland"] = function()
+    clearMapEffects()
+    Lighting.Technology = Enum.Technology.Future
+    Lighting.ClockTime = 13; Lighting.Brightness = 1.9
+    Lighting.Ambient        = Color3.fromRGB(95, 125, 45)
+    Lighting.OutdoorAmbient = Color3.fromRGB(120, 158, 58)
+    Lighting.FogColor = Color3.fromRGB(75, 105, 30); Lighting.FogStart = 150; Lighting.FogEnd = 750
+    local a = Instance.new("Atmosphere", Lighting); a.Name = "ToxicAtmo"
+    a.Density = 0.38; a.Haze = 2.4; a.Glare = 0.06
+    a.Color = Color3.fromRGB(148, 200, 55); a.Decay = Color3.fromRGB(65, 95, 10)
+    local cc = Instance.new("ColorCorrectionEffect", Lighting); cc.Name = "ToxicCC"
+    cc.Brightness = 0.04; cc.Contrast = 0.22; cc.Saturation = 0.65; cc.TintColor = Color3.fromRGB(195, 255, 115)
+    local bl = Instance.new("BloomEffect", Lighting); bl.Name = "ToxicBloom"
+    bl.Intensity = 0.28; bl.Size = 16; bl.Threshold = 0.9
+end
+
+MAP_PRESETS["Heaven"] = function()
+    clearMapEffects()
+    Lighting.Technology = Enum.Technology.Future
+    Lighting.ClockTime = 15; Lighting.Brightness = 2.2
+    Lighting.Ambient        = Color3.fromRGB(230, 200, 150)
+    Lighting.OutdoorAmbient = Color3.fromRGB(250, 220, 170)
+    Lighting.FogColor = Color3.fromRGB(255, 235, 195); Lighting.FogStart = 500; Lighting.FogEnd = 2500
+    local a = Instance.new("Atmosphere", Lighting); a.Name = "HeavenAtmo"
+    a.Density = 0.1; a.Haze = 1.6; a.Glare = 0.4
+    a.Color = Color3.fromRGB(255, 232, 185); a.Decay = Color3.fromRGB(235, 205, 155)
+    local cc = Instance.new("ColorCorrectionEffect", Lighting); cc.Name = "HeavenCC"
+    cc.Brightness = 0.07; cc.Contrast = -0.07; cc.Saturation = -0.12; cc.TintColor = Color3.fromRGB(255, 248, 225)
+    local bl = Instance.new("BloomEffect", Lighting); bl.Name = "HeavenBloom"
+    bl.Intensity = 0.9; bl.Size = 34; bl.Threshold = 0.65
+end
+
+MAP_PRESETS["Inferno"] = function()
+    clearMapEffects()
+    Lighting.Technology = Enum.Technology.Future
+    Lighting.ClockTime = 19.2; Lighting.Brightness = 1.5
+    Lighting.Ambient        = Color3.fromRGB(145, 48, 0)
+    Lighting.OutdoorAmbient = Color3.fromRGB(188, 65, 5)
+    Lighting.FogColor = Color3.fromRGB(105, 25, 0); Lighting.FogStart = 75; Lighting.FogEnd = 520
+    local a = Instance.new("Atmosphere", Lighting); a.Name = "InfernoAtmo"
+    a.Density = 0.42; a.Haze = 3.2; a.Glare = 0.28
+    a.Color = Color3.fromRGB(245, 85, 8); a.Decay = Color3.fromRGB(115, 28, 0)
+    local cc = Instance.new("ColorCorrectionEffect", Lighting); cc.Name = "InfernoCC"
+    cc.Brightness = 0.04; cc.Contrast = 0.33; cc.Saturation = 0.68; cc.TintColor = Color3.fromRGB(255, 145, 55)
+    local bl = Instance.new("BloomEffect", Lighting); bl.Name = "InfernoBloom"
+    bl.Intensity = 0.85; bl.Size = 30; bl.Threshold = 0.72
+end
+
+MAP_PRESETS["Golden Hour"] = function()
+    clearMapEffects()
+    Lighting.Technology = Enum.Technology.Future
+    Lighting.ClockTime = 18.3; Lighting.Brightness = 2.6
+    Lighting.Ambient        = Color3.fromRGB(255, 175, 80)
+    Lighting.OutdoorAmbient = Color3.fromRGB(255, 195, 105)
+    Lighting.FogColor = Color3.fromRGB(255, 205, 140); Lighting.FogStart = 350; Lighting.FogEnd = 1800
+    local a = Instance.new("Atmosphere", Lighting); a.Name = "GoldenAtmo"
+    a.Density = 0.14; a.Haze = 1.3; a.Glare = 0.45
+    a.Color = Color3.fromRGB(255, 195, 115); a.Decay = Color3.fromRGB(238, 125, 55)
+    local cc = Instance.new("ColorCorrectionEffect", Lighting); cc.Name = "GoldenCC"
+    cc.Brightness = 0.09; cc.Contrast = -0.04; cc.Saturation = 0.12; cc.TintColor = Color3.fromRGB(255, 232, 175)
+    local bl = Instance.new("BloomEffect", Lighting); bl.Name = "GoldenBloom"
+    bl.Intensity = 1.1; bl.Size = 38; bl.Threshold = 0.6
+end
+
+MAP_PRESETS["Matrix"] = function()
+    clearMapEffects()
+    Lighting.Technology = Enum.Technology.Future
+    Lighting.ClockTime = 3; Lighting.Brightness = 0.95
+    Lighting.Ambient        = Color3.fromRGB(0, 55, 18)
+    Lighting.OutdoorAmbient = Color3.fromRGB(0, 80, 28)
+    Lighting.FogColor = Color3.fromRGB(0, 22, 6); Lighting.FogStart = 60; Lighting.FogEnd = 420
+    local a = Instance.new("Atmosphere", Lighting); a.Name = "MatrixAtmo"
+    a.Density = 0.38; a.Haze = 1.5; a.Glare = 0
+    a.Color = Color3.fromRGB(0, 175, 50); a.Decay = Color3.fromRGB(0, 65, 15)
+    local cc = Instance.new("ColorCorrectionEffect", Lighting); cc.Name = "MatrixCC"
+    cc.Brightness = 0.02; cc.Contrast = 0.45; cc.Saturation = 1.15; cc.TintColor = Color3.fromRGB(40, 255, 65)
+    local bl = Instance.new("BloomEffect", Lighting); bl.Name = "MatrixBloom"
+    bl.Intensity = 0.6; bl.Size = 22; bl.Threshold = 0.76
+end
+
+-- ─── Consolidated RunService loops ───────────────────────────────────────────
+
+-- All _prev* start as a sentinel (empty table) so first-tick comparison always fires,
+-- regardless of what loadConfig() set in STATE. This ensures saved-on features activate
+-- immediately without needing a retoggle.
+local _UNSET = {}
+
+local _RT = {
+    autoKillActive = false,
+    lastAutoKillShoot = 0,
+    prevSkybox = _UNSET,
+    prevSkyboxPreset = _UNSET,
+    prevFireRateEnabled = _UNSET,
+    prevFireRate = _UNSET,
+    fastApplied = false,
+    prevWalkSpeedEnabled = _UNSET,
+    prevJumpPowerEnabled = _UNSET,
+    prevNoclip = false,
+    noclipAccum = 0,
+    origFOV = Camera.FieldOfView,
+    prevCameraFOVEnabled = _UNSET,
+    prevMapVisuals = _UNSET,
+    prevMapPreset = _UNSET,
+    prevHighSat = _UNSET,
+    highSatCC = nil,
+    prevStream = _UNSET,
+    streamPatched = {},
+    streamConns = {},
+    prevMapColorEnabled = _UNSET, -- stores sig string covering all map overlay settings
+    arenaOrigColors = {},
+    arenaColorConn = nil,
+}
+
+local function enableStreaming()
+    local name  = LocalPlayer.Name
+    local disp  = LocalPlayer.DisplayName
+    local function patch(obj)
+        if not (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then return end
+        local alias = STATE.StreamingAlias ~= "" and STATE.StreamingAlias or "Streamer"
+        local txt = obj.Text; if txt == "" then return end
+        local new = txt:gsub(name, alias)
+        if disp ~= name then new = new:gsub(disp, alias) end
+        if new ~= txt then
+            _RT.streamPatched[obj] = _RT.streamPatched[obj] or txt
+            pcall(function() obj.Text = new end)
+        end
+    end
+    local function scanChar(char)
+        if not char then return end
+        for _, obj in ipairs(char:GetDescendants()) do patch(obj) end
+        char.DescendantAdded:Connect(patch)
+    end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        for _, obj in ipairs(pg:GetDescendants()) do patch(obj) end
+        _RT.streamConns[1] = pg.DescendantAdded:Connect(patch)
+    end
+    for _, p in ipairs(Players:GetPlayers()) do scanChar(p.Character) end
+    _RT.streamConns[2] = Players.PlayerAdded:Connect(function(p)
+        p.CharacterAdded:Connect(function(char) task.wait(); scanChar(char) end)
+    end)
+    for _, p in ipairs(Players:GetPlayers()) do
+        _RT.streamConns[#_RT.streamConns + 1] = p.CharacterAdded:Connect(function(char)
+            task.wait(); scanChar(char)
+        end)
+    end
+end
+
+local function disableStreaming()
+    for _, c in ipairs(_RT.streamConns) do pcall(function() c:Disconnect() end) end
+    _RT.streamConns = {}
+    for obj, txt in pairs(_RT.streamPatched) do
+        pcall(function() if obj and obj.Parent then obj.Text = txt end end)
+    end
+    _RT.streamPatched = {}
+end
+
+local _queueAccum = 0
+
+RunService.Heartbeat:Connect(function(dt)
+    if not STATE.Master then return end
+
+    _queueAccum = _queueAccum + dt
+    if _queueAccum >= 0.3 then
+        _queueAccum = 0
+        updateQueue()
+    end
+
+    if STATE.Teleport and targetPlayer and targetPlayer.Character and LocalPlayer.Character then
+        local tRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local lRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if tRoot and lRoot then
+            pcall(function() lRoot.CFrame = CFrame.new(tRoot.Position + Vector3.new(0, TP_HEIGHT, 0)) end)
+        end
+    end
+
+    _trajAccum = _trajAccum + dt
+    if _trajAccum >= TRAJ_INTERVAL then
+        _trajAccum = _trajAccum % TRAJ_INTERVAL
+        if STATE.AimTrajectory then
+            for player, data in pairs(TRAJ_DATA) do
+                if player == LocalPlayer or not isEnemy(player) then continue end
+                local char = getCharacter(player)
+                local root = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head"))
+                if root then
+                    local pts = data.points
+                    pts[#pts + 1] = root.Position
+                    while #pts > TRAJ_MAX_PTS do table.remove(pts, 1) end
+                end
+            end
+        end
+    end
+end)
+
+local function isMapModel(obj)
+    return obj:IsA("Model") and obj:FindFirstChild("Spectate") and obj:FindFirstChild("Primary")
+end
+
+local function findParentMapModel(obj)
+    local cur = obj.Parent
+    while cur and cur ~= workspace do
+        if isMapModel(cur) then return cur end
+        cur = cur.Parent
+    end
+end
+
+local function getMapColor()
+    return Color3.fromRGB(STATE.MapColorR, STATE.MapColorG, STATE.MapColorB)
+end
+
+-- ─── Map Dome ────────────────────────────────────────────────────────────────
+
+local DOME_WALL_TAG  = "RBDomeWall"
+local _domeWalls     = {}
+local _coloredModels = {}  -- [model] = true, tracks which models already have dome+color applied
+
+local DOME_MATERIALS = {
+    "Neon","SmoothPlastic","Glass","ForceField","Metal",
+    "Wood","Marble","Granite","Fabric","Ice",
+}
+local DOME_MATERIAL_MAP = {}
+for _, name in ipairs(DOME_MATERIALS) do
+    DOME_MATERIAL_MAP[name] = Enum.Material[name]
+end
+
+local function getDomeColor()
+    return Color3.fromRGB(STATE.MapDomeColorR, STATE.MapDomeColorG, STATE.MapDomeColorB)
+end
+
+local function spawnDomeWallsForModel(model)
+    local color        = getDomeColor()
+    local mat          = DOME_MATERIAL_MAP[STATE.MapDomeMaterial] or Enum.Material.Neon
+    local transparency = STATE.MapDomeTransparency / 100
+    local SIZE = Vector3.new(400, 400, 6)
+    local DIST = 200
+    local cf   = model:GetPivot()
+    local transforms = {
+        cf * CFrame.new(0,    0,    DIST),
+        cf * CFrame.new(0,    0,   -DIST),
+        cf * CFrame.new(DIST,  0,   0) * CFrame.Angles(0, math.rad(90), 0),
+        cf * CFrame.new(-DIST, 0,   0) * CFrame.Angles(0, math.rad(90), 0),
+        cf * CFrame.new(0,    DIST, 0) * CFrame.Angles(math.rad(90), 0, 0),
+    }
+    for _, wallCF in ipairs(transforms) do
+        local wall = Instance.new("Part")
+        wall.Name         = DOME_WALL_TAG
+        wall.Size         = SIZE
+        wall.Color        = color
+        wall.Material     = mat
+        wall.Anchored     = true
+        wall.CanCollide   = false
+        wall.CastShadow   = false
+        wall.Transparency = transparency
+        wall.CFrame       = wallCF
+        wall.Parent       = workspace
+        _domeWalls[#_domeWalls + 1] = wall
+    end
+end
+
+local function colorModelParts(model)
+    local newColor = getMapColor()
+    for _, part in ipairs(model:GetDescendants()) do
+        if part:IsA("BasePart") then
+            if not _RT.arenaOrigColors[part] then _RT.arenaOrigColors[part] = part.Color end
+            pcall(function() part.Color = newColor end)
+        end
+    end
+end
+
+-- Apply color and/or dome to a single qualifying model we haven't processed yet.
+local function applyToModel(model)
+    if _coloredModels[model] then return end
+    _coloredModels[model] = true
+    if STATE.MapColorEnabled then colorModelParts(model) end
+    if STATE.MapDome        then spawnDomeWallsForModel(model) end
+end
+
+-- Scan all existing workspace descendants for qualifying models.
+local function scanWorkspace()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if isMapModel(obj) then applyToModel(obj) end
+    end
+end
+
+local function clearDomeWalls()
+    for _, w in ipairs(_domeWalls) do pcall(function() w:Destroy() end) end
+    _domeWalls = {}
+end
+
+local function disableArenaColor()
+    if _RT.arenaColorConn then _RT.arenaColorConn:Disconnect(); _RT.arenaColorConn = nil end
+    for part, origColor in pairs(_RT.arenaOrigColors) do
+        pcall(function() part.Color = origColor end)
+    end
+    _RT.arenaOrigColors = {}
+end
+
+
+
+-- Full teardown: restores original colors, destroys dome walls, clears tracking.
+local function teardownMapOverlays()
+    disableArenaColor()
+    clearDomeWalls()
+    _coloredModels = {}
+end
+
+-- Re-applies everything from scratch (called when settings change while enabled).
+local function rebuildMapOverlays()
+    teardownMapOverlays()
+    scanWorkspace()
+end
+
+-- Called once to wire up the DescendantAdded watcher for late-streaming models.
+local function startMapWatcher()
+    if _RT.arenaColorConn then _RT.arenaColorConn:Disconnect() end
+    _RT.arenaColorConn = workspace.DescendantAdded:Connect(function(obj)
+        if not (STATE.MapColorEnabled or STATE.MapDome or STATE.RainbowMap) then return end
+        -- A newly added Model won't have its children yet; defer one frame so
+        -- isMapModel (which checks for Spectate + Primary children) can succeed.
+        if obj:IsA("Model") then
+            task.defer(function()
+                if obj.Parent and isMapModel(obj) then applyToModel(obj) end
+            end)
+        elseif obj:IsA("BasePart") then
+            -- Part added inside an already-qualified model that we haven't seen yet
+            task.defer(function()
+                local model = findParentMapModel(obj)
+                if model then applyToModel(model) end
+            end)
+        end
+    end)
+end
+
+local function stopMapWatcher()
+    if _RT.arenaColorConn then _RT.arenaColorConn:Disconnect(); _RT.arenaColorConn = nil end
+end
+
+RunService.Stepped:Connect(function(_, dt)
+    Camera = workspace.CurrentCamera
+
+    -- ── State-change detection runs unconditionally (not gated by Master) ──
+    -- This ensures features saved as enabled in config activate on first tick,
+    -- and toggling a feature while Master is off still takes effect.
+
+    if STATE.FireRateEnabled ~= _RT.prevFireRateEnabled or STATE.FireRate ~= _RT.prevFireRate then
+        _RT.prevFireRateEnabled = STATE.FireRateEnabled; _RT.prevFireRate = STATE.FireRate
+        _RT.fastApplied = false
+        if not STATE.FireRateEnabled then restoreItemLibrary() end
+    end
+
+    if STATE.WalkSpeedEnabled ~= _RT.prevWalkSpeedEnabled then
+        _RT.prevWalkSpeedEnabled = STATE.WalkSpeedEnabled
+        if not STATE.WalkSpeedEnabled and LocalPlayer.Character then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = origHumStats.WalkSpeed end
+        end
+    end
+    if STATE.JumpPowerEnabled ~= _RT.prevJumpPowerEnabled then
+        _RT.prevJumpPowerEnabled = STATE.JumpPowerEnabled
+        if not STATE.JumpPowerEnabled and LocalPlayer.Character then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.JumpPower = origHumStats.JumpPower end
+        end
+    end
+
+    if STATE.CameraFOVEnabled ~= _RT.prevCameraFOVEnabled then
+        _RT.prevCameraFOVEnabled = STATE.CameraFOVEnabled
+        if not STATE.CameraFOVEnabled then
+            Camera.FieldOfView = _RT.origFOV
+        end
+    end
+
+    local wantMV = STATE.MapVisuals
+    local presetChanged = STATE.MapVisualsPreset ~= _RT.prevMapPreset
+    _RT.prevMapPreset = STATE.MapVisualsPreset
+    if wantMV ~= _RT.prevMapVisuals then
+        _RT.prevMapVisuals = wantMV
+        if wantMV then _mapVisualsApplied = true; pcall(MAP_PRESETS[STATE.MapVisualsPreset] or function() end)
+        else restoreMapVisuals() end
+    elseif wantMV and presetChanged then
+        restoreMapVisuals(); _mapVisualsApplied = true
+        pcall(MAP_PRESETS[STATE.MapVisualsPreset] or function() end)
+    end
+
+    if STATE.HighSaturation ~= _RT.prevHighSat then
+        _RT.prevHighSat = STATE.HighSaturation
+        if STATE.HighSaturation then
+            if not _RT.highSatCC then
+                _RT.highSatCC = Instance.new("ColorCorrectionEffect", Lighting)
+                _RT.highSatCC.Name = "HighSatCC"
+            end
+            _RT.highSatCC.Saturation = 1.8
+        else
+            if _RT.highSatCC then _RT.highSatCC:Destroy(); _RT.highSatCC = nil end
+        end
+    end
+
+    -- Compute a sig covering all map overlay settings.
+    -- Any change (toggle, color, material, transparency) triggers a full rebuild.
+    local anyOverlay = STATE.MapColorEnabled or STATE.MapDome or STATE.RainbowMap
+    local sig = tostring(anyOverlay)
+        .. tostring(STATE.MapColorEnabled) .. tostring(STATE.MapColorR) .. tostring(STATE.MapColorG) .. tostring(STATE.MapColorB)
+        .. tostring(STATE.MapDome) .. tostring(STATE.MapDomeMaterial)
+        .. tostring(STATE.MapDomeColorR) .. tostring(STATE.MapDomeColorG) .. tostring(STATE.MapDomeColorB)
+        .. tostring(STATE.MapDomeTransparency)
+        .. tostring(STATE.RainbowMap)
+
+    if sig ~= _RT.prevMapColorEnabled then
+        _RT.prevMapColorEnabled = sig
+        if anyOverlay then
+            rebuildMapOverlays()
+            startMapWatcher()
+        else
+            teardownMapOverlays()
+            stopMapWatcher()
+        end
+    end
+
+    if STATE.StreamingMode ~= _RT.prevStream then
+        _RT.prevStream = STATE.StreamingMode
+        if STATE.StreamingMode then enableStreaming() else disableStreaming() end
+    end
+
+
+    -- Skybox changer
+    local wantSkybox = STATE.SkyboxEnabled and STATE.Master
+    if wantSkybox ~= _RT.prevSkybox or (wantSkybox and STATE.SkyboxPreset ~= _RT.prevSkyboxPreset) then
+        _RT.prevSkybox = wantSkybox; _RT.prevSkyboxPreset = STATE.SkyboxPreset
+        if wantSkybox then
+            local sky = Lighting:FindFirstChild("RageByteSky") or Instance.new("Sky")
+            sky.Name = "RageByteSky"; sky.Parent = Lighting
+            local preset = SKYBOX_PRESETS[STATE.SkyboxPreset]
+            if preset then
+                for k, v in pairs(preset) do sky[k] = v end
+            end
+        else
+            local sky = Lighting:FindFirstChild("RageByteSky")
+            if sky then sky:Destroy() end
+        end
+    end
+
+    -- ── Per-frame active work — gated by Master ──
+    if not STATE.Master then return end
+
+    if STATE.FireRateEnabled and not _RT.fastApplied and type(ItemLibrary) == "table" then
+        applyFastWeapons(); _RT.fastApplied = true
+    end
+
+    if STATE.WalkSpeedEnabled and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = STATE.WalkSpeed end
+    end
+
+    if STATE.NoRecoil and LocalPlayer.Character then
+        local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+        if tool then
+            local rv = tool:FindFirstChild("Recoil", true)
+            if rv then pcall(function() rv.Value = 0 end) end
+        end
+    end
+
+    local wantNoclip = STATE.Noclip
+    if wantNoclip then
+        _RT.noclipAccum = _RT.noclipAccum + dt
+        if _RT.noclipAccum >= 0.15 then
+            _RT.noclipAccum = 0
+            local char = LocalPlayer.Character
+            if char then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") then part.CanCollide = false end
+                end
+            end
+        end
+    elseif _RT.prevNoclip then
+        local char = LocalPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then pcall(function() part.CanCollide = true end) end
+            end
+        end
+    end
+    _RT.prevNoclip = wantNoclip
+end)
+
+RunService.RenderStepped:Connect(function(dt)
+    if STATE.RainbowVisuals or STATE.RainbowMap then _rbColor = getRainbow(0) end
+
+    if STATE.RainbowMap then
+        -- drive arena parts
+        if STATE.MapColorEnabled then
+            for part in pairs(_RT.arenaOrigColors) do
+                pcall(function() part.Color = _rbColor end)
+            end
+        end
+        -- drive dome walls
+        if STATE.MapDome then
+            local mat = DOME_MATERIAL_MAP[STATE.MapDomeMaterial] or Enum.Material.Neon
+            local transp = STATE.MapDomeTransparency / 100
+            for _, w in ipairs(_domeWalls) do
+                pcall(function() w.Color = _rbColor; w.Material = mat; w.Transparency = transp end)
+            end
+        end
+    end
+
+    if FOVCircle then
+        FOVCircle.Radius   = STATE.AimFOV
+        FOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+        FOVCircle.Color    = STATE.RainbowVisuals and _rbColor or Color3.fromRGB(200,200,200)
+        FOVCircle.Visible  = STATE.Aimbot and STATE.Master
+    end
+
+    if STATE.Aimbot and STATE.AimActive and STATE.Master then
+        local t = getClosestInFOV(); if t then aimAt(t) end
+    end
+    -- AutoKill (desync-based)
+    if STATE.AutoKill and STATE.Master then
+        local akTarget = getLowestHealthTarget()
+        if akTarget and akTarget.Character then
+            local akHum = akTarget.Character:FindFirstChild("Humanoid")
+            if akHum and akHum.Health > 0 then
+                _ds:__desync_start(akTarget)
+                if not _RT.autoKillActive then _RT.autoKillActive = true end
+                local now = tick()
+                if now - _RT.lastAutoKillShoot > math.max(STATE.FireRate, 0.05) then
+                    _RT.lastAutoKillShoot = now
+                    if performClick then task.spawn(performClick) end
+                end
+            else
+                _ds:__desync_stop()
+                _RT.autoKillActive = false
+            end
+        else
+            _ds:__desync_stop()
+            _RT.autoKillActive = false
+        end
+    elseif _RT.autoKillActive then
+        _ds:__desync_stop()
+        _RT.autoKillActive = false
+        if Camera.CameraType == Enum.CameraType.Scriptable then
+            Camera.CameraType = Enum.CameraType.Custom
+            if LocalPlayer.Character then
+                local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if hum then Camera.CameraSubject = hum end
+            end
+        end
+    end
+
+
+
+    if STATE.Master then runTriggerbot() end
+
+    if STATE.CameraFOVEnabled then
+        Camera.FieldOfView = STATE.CameraFOV
+    end
+
+    if TargetLineDrawing then
+        if STATE.TargetLine and STATE.Master then
+            local lineTarget = STATE.SilentAim and getSilentAimTarget()
+                or (STATE.Aimbot and getClosestInFOV())
+            if lineTarget then
+                local char = getCharacter(lineTarget)
+                local part = char and (char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart"))
+                if part then
+                    local sp, onScreen, depth = worldToScreen(part.Position)
+                    if onScreen and depth > 0 and getDistance(lineTarget) <= 400 then
+                        TargetLineDrawing.From    = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+                        TargetLineDrawing.To      = sp
+                        TargetLineDrawing.Color   = STATE.RainbowVisuals and _rbColor or Color3.fromRGB(STATE.TargetLineColorR, STATE.TargetLineColorG, STATE.TargetLineColorB)
+                        TargetLineDrawing.Visible = true
+                    else
+                        TargetLineDrawing.Visible = false
+                    end
+                else
+                    TargetLineDrawing.Visible = false
+                end
+            else
+                TargetLineDrawing.Visible = false
+            end
+        else
+            TargetLineDrawing.Visible = false
+        end
+    end
+
+    if Drawing then
+        for player, _ in pairs(ESP_OBJECTS) do updateESP(player) end
+    end
+
+    do
+        local chamsActive = STATE.ChamsESP and STATE.Master
+        local chamsColor  = visualColor(STATE.ChamsR, STATE.ChamsG, STATE.ChamsB)
+        for player, data in pairs(CHAMS_OBJECTS) do
+            if data.hl and data.hl.Parent then
+                local char   = player.Character
+                local hum    = char and char:FindFirstChildOfClass("Humanoid")
+                data.hl.Enabled   = chamsActive and isEnemy(player) and hum ~= nil and hum.Health > 0
+                data.hl.FillColor = chamsColor
+            end
+        end
+    end
+
+    do
+        local trajColor = visualColor(STATE.AimTrajR, STATE.AimTrajG, STATE.AimTrajB)
+        local lineIdx   = 0
+        if STATE.AimTrajectory and STATE.Master then
+            for player, data in pairs(TRAJ_DATA) do
+                if not isEnemy(player) then continue end
+                local pts = data.points
+                local n   = #pts
+                if n < 4 then continue end
+                local sp = {}
+                for i, wp in ipairs(pts) do
+                    local s, _, depth = worldToScreen(wp)
+                    sp[i] = depth > 0 and s or false
+                end
+                for i = 2, n - 2 do
+                    local p0, p1, p2, p3 = sp[i-1], sp[i], sp[i+1], sp[i+2]
+                    if not (p0 and p1 and p2 and p3) then continue end
+                    local transp = 1 - ((i-1)/(n-1)) * 0.97
+                    for s = 0, TRAJ_SUBSEG - 1 do
+                        if lineIdx >= TRAJ_MAX_LINES then break end
+                        lineIdx = lineIdx + 1
+                        local ln = getTrajLine(lineIdx)
+                        if ln then
+                            ln.From = catmullV2(p0,p1,p2,p3, s/TRAJ_SUBSEG)
+                            ln.To   = catmullV2(p0,p1,p2,p3, (s+1)/TRAJ_SUBSEG)
+                            ln.Color = trajColor; ln.Transparency = transp; ln.Visible = true
+                        end
+                    end
+                end
+            end
+        end
+        for i = lineIdx + 1, TRAJ_LINES_USED do
+            if TRAJ_LINE_POOL[i] then TRAJ_LINE_POOL[i].Visible = false end
+        end
+        TRAJ_LINES_USED = lineIdx
+    end
+
+    if _chImg then
+        local want = STATE.CrosshairEnabled and STATE.Master
+        if want then
+            local style = STATE.CrosshairStyle or "emoji"
+            if style ~= _chStyle or STATE.CrosshairSize ~= _chSize then applyCrosshair() end
+            if STATE.CrosshairSpin then
+                _crosshairAngle = (_crosshairAngle + SPIN_SPEED * dt) % 360
+            else
+                _crosshairAngle = 0
+            end
+            _chImg.Rotation = _crosshairAngle
+            _chImg.Visible  = true
+        else
+            _chImg.Visible = false
+        end
+    end
+
+    updateFly()
+end)
+
+-- ─── UI ──────────────────────────────────────────────────────────────────────
+
+local _repo         = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library       = loadstring(game:HttpGet(_repo .. "Library.lua"))()
+local ThemeManager  = loadstring(game:HttpGet(_repo .. "addons/ThemeManager.lua"))()
+local SaveManager   = loadstring(game:HttpGet(_repo .. "addons/SaveManager.lua"))()
+
+local function notify(msg)
+    pcall(function() Library:Notify(msg) end)
+end
+
+local Window = Library:CreateWindow({
+    Title          = "Rivals RageByte",
+    Footer         = "ragebyte",
+    ShowCustomCursor = true,
+    ToggleKeybind  = Enum.KeyCode.K,
+})
+
+local function findIdx(opts, val)
+    for i, v in ipairs(opts) do if v == val then return i end end
+    return 1
+end
+
+local function tog(box, text, key)
+    box:AddToggle(key, { Text = text, Default = STATE[key],
+        Callback = function(v) updateState(key, v) end })
+end
+local function sli(box, text, key, min, max, rounding, cur, cb)
+    box:AddSlider(key, { Text = text, Default = cur or STATE[key], Min = min, Max = max,
+        Rounding = rounding or 0,
+        Callback = cb or function(v) updateState(key, v) end })
+end
+local function drp(box, text, key, opts, cb)
+    box:AddDropdown(key, { Text = text, Values = opts, Default = findIdx(opts, STATE[key]),
+        Multi = false,
+        Callback = cb or function(v) updateState(key, v) end })
+end
+local function clr(box, text, id, keys)
+    box:AddLabel(text):AddColorPicker(id, {
+        Default = Color3.fromRGB(STATE[keys[1]], STATE[keys[2]], STATE[keys[3]]),
+        Callback = function(c) updateColor(keys, c) end })
+end
+local function btn(box, text, fn)
+    box:AddButton({ Text = text, Func = fn, DoubleClick = false })
+end
+local function inp(box, text, key, placeholder, cb)
+    box:AddInput(key, { Default = STATE[key], Placeholder = placeholder or "",
+        Callback = cb or function(v) updateState(key, v) end })
+end
+
+local function stopScript()
+    for _, key in ipairs({ "Master","Aimbot","AimActive","SilentAim","Triggerbot","AutoClick",
+        "ESP","FireRateEnabled","WalkSpeedEnabled","JumpPowerEnabled","InfJump","NoRecoil",
+        "UnlockSkins","ChamsESP","AimTrajectory","CrosshairEnabled",
+        "MapVisuals","Fly","Noclip", "InfoLogger", "AutoPlay", "AutoQueue", "SpoofDevice" }) do
+        STATE[key] = false
+    end
+    if _RT.highSatCC then pcall(function() _RT.highSatCC:Destroy() end); _RT.highSatCC = nil end
+    teardownMapOverlays()
+    stopMapWatcher()
+    for _, ln in ipairs(TRAJ_LINE_POOL) do pcall(function() ln.Visible = false end) end
+    teardownCrosshair()
+    restoreItemLibrary()
+    if LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = origHumStats.WalkSpeed; hum.JumpPower = origHumStats.JumpPower end
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then pcall(function() part.CanCollide = true end) end
+        end
+    end
+    if _isHoldingClick then pcall(mouse1release); _isHoldingClick = false end
+    removeDrawing(FOVCircle); removeDrawing(TargetLineDrawing)
+    for player in pairs(ESP_OBJECTS) do removeESP(player) end
+    for player in pairs(CHAMS_OBJECTS) do cleanupChams(player) end
+    pcall(function() if customEnv and customEnv.SilentAim then customEnv.SilentAim:Shutdown() end end)
+    pcall(function() Library:Unload() end)
+    pcall(function() _mobileAimGui:Destroy() end)
+    pcall(function() _infoLoggerGui:Destroy() end)
+end
+
+local function serverHop()
+    task.spawn(function()
+        local TS      = game:GetService("TeleportService")
+        local placeId = game.PlaceId
+        local jobId   = game.JobId
+        local found, cursor = nil, ""
+        repeat
+            local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100%s")
+                :format(placeId, cursor ~= "" and ("&cursor=" .. cursor) or "")
+            local ok, raw = pcall(function() return game:HttpGet(url) end)
+            if not ok then break end
+            local ok2, data = pcall(function() return HttpService:JSONDecode(raw) end)
+            if not ok2 or type(data) ~= "table" or type(data.data) ~= "table" then break end
+            for _, server in ipairs(data.data) do
+                if server.id ~= jobId and type(server.id) == "string"
+                    and type(server.playing) == "number" and server.playing < server.maxPlayers then
+                    found = server.id; break
+                end
+            end
+            cursor = (data.nextPageCursor and tostring(data.nextPageCursor)) or ""
+        until found or cursor == "" or cursor == "null"
+        if found then
+            notify("Server Hop: Jumping to a new server..."); task.wait(1)
+            pcall(function() TS:TeleportToPlaceInstance(placeId, found, LocalPlayer) end)
+        else
+            notify("Server Hop: No available servers found.")
+        end
+    end)
+end
+
+local function redeemCodes()
+    task.spawn(function()
+        local ok, remote = pcall(function() return ReplicatedStorage.Remotes.Data.RedeemCode end)
+        if not ok or not remote then notify("Codes: Redeem remote not found."); return end
+        for _, code in ipairs({"COMMUNITY23","FREE181","BONUS","BOOST","ROBLOX_RTC"}) do
+            pcall(function() remote:InvokeServer(string.lower(code)) end)
+            task.wait(0.5)
+        end
+        notify("Codes: All codes redeemed!")
+    end)
+end
+
+local _dynamicQueueModes = {"1v1", "2v2", "3v3", "4v4", "5v5", "1v1v1", "2v2v2"}
+pcall(function()
+    local tempDl = require(ReplicatedStorage.Modules.DuelLibrary)
+    if tempDl and tempDl.MatchmakingQueues then
+        local names = {}
+        for qName, _ in pairs(tempDl.MatchmakingQueues) do
+            table.insert(names, qName)
+        end
+        local function getPriority(name)
+            local ln = string.lower(name)
+            if ln:sub(1, 4) == "ltm_" then return 3 end
+            if ln:find("ranked") then return 2 end
+            return 1
+        end
+        table.sort(names, function(a, b)
+            local p1 = getPriority(a)
+            local p2 = getPriority(b)
+            if p1 == p2 then return a < b end
+            return p1 < p2
+        end)
+        if #names > 0 then _dynamicQueueModes = names end
+    end
+end)
+
+local Tabs = {
+    Combat   = Window:AddTab("Combat",   "crosshair"),
+    Weapons  = Window:AddTab("Weapons",  "sword"),
+    Visuals  = Window:AddTab("Visuals",  "eye"),
+    Movement = Window:AddTab("Movement", "zap"),
+    World    = Window:AddTab("World",    "sun"),
+    Misc     = Window:AddTab("Misc",     "settings"),
+    UI       = Window:AddTab("UI",       "monitor"),
+}
+
+do
+    local L = Tabs.Combat:AddLeftGroupbox("General")
+    tog(L, "Enabled",    "Master")
+    tog(L, "Team Check", "TeamCheck")
+    tog(L, "Target NPCs", "TargetNPCs")
+    L:AddDivider()
+    tog(L, "Auto Play (Bot)", "AutoPlay")
+    sli(L, "Bot Speed (%)", "AutoPlaySpeed", 10, 300, 0)
+    sli(L, "Bot Aim Smoothness", "AutoPlayAimSmoothness", 1, 20, 0)
+    sli(L, "Bot Path Smoothness", "AutoPlayPathSmoothness", 1, 50, 0)
+    L:AddDivider()
+    tog(L, "Auto Queue", "AutoQueue")
+    drp(L, "Queue Type", "AutoQueueType", {"Direct Queue", "Lobby Location"})
+    local aqModeDrop = L:AddDropdown("AutoQueueMode", {
+        Values = _dynamicQueueModes,
+        Default = 1,
+        Multi = false,
+        Text = "Queue Gamemode",
+        Callback = function(v) STATE.AutoQueueMode = v end
+    })
+    L:AddDivider()
+    tog(L, "Auto Kill", "AutoKill")
+    L:AddDivider()
+    tog(L, "Silent Aim", "SilentAim")
+    drp(L, "Silent Aim Mode", "SilentAimMode", {"Regular","Wallbang (Risky)"})
+    sli(L, "Hit Chance (%)", "SilentAimHitChance", 1, 100, 0)
+    tog(L, "Unlimited Range", "SilentAimUnlimitedRange")
+
+    local R = Tabs.Combat:AddRightGroupbox("Aimbot")
+    tog(R, "Aimbot",       "Aimbot")
+    drp(R, "Aimbot Method","AimMethod", {"Mouse", "Camera"})
+    drp(R, "Aim Key", "AimKeyName", AIM_KEYBIND_OPTIONS, function(v)
+        STATE.AimKeyName = v; STATE.AimKey = AIM_KEYBIND_MAP[v]; saveConfig()
+    end)
+    drp(R, "Aim Mode", "AimMode", {"Hold","Toggle"})
+    sli(R, "Smoothness",   "AimSmoothness",  1, 20,   0)
+    sli(R, "FOV Radius",   "AimFOV",         50, 600, 0)
+    R:AddDivider()
+    drp(R, "Target Part",  "AimPart", {"Head","HumanoidRootPart","UpperTorso","LowerTorso","LeftUpperArm","RightUpperArm","LeftUpperLeg","RightUpperLeg"})
+    tog(R, "Visible Only", "AimVisibleOnly")
+    tog(R, "Humanize",     "AimHumanize")
+    sli(R, "Max Distance", "AimMaxDistance", 0, 2000, 0)
+    R:AddDivider()
+    tog(R, "Triggerbot",   "Triggerbot")
+    sli(R, "Trigger Delay (ms)", "TriggerbotDelay", 0, 500, 0)
+end
+
+do
+    local L = Tabs.Weapons:AddLeftGroupbox("Modifications")
+    tog(L, "Fire Rate",  "FireRateEnabled")
+    sli(L, "Fire Rate Value", "FireRate", 0.001, 1, 3)
+    tog(L, "No Recoil",  "NoRecoil")
+    tog(L, "Auto Click", "AutoClick")
+end
+
+do
+    local L = Tabs.Visuals:AddLeftGroupbox("ESP")
+    tog(L, "ESP Enabled",  "ESP")
+    sli(L, "Max Range",    "ESPMaxDistance", 50, 500, 0)
+    L:AddDivider()
+    drp(L, "Box Style",    "ESPBoxStyle", {"None","Full Box","Corner Box"})
+    tog(L, "Box Fill",     "ESPBoxFill")
+    tog(L, "Tracers",      "ESPTracer")
+    tog(L, "Names",        "ESPName")
+    tog(L, "Distance",     "ESPDistance")
+    tog(L, "Level",        "ESPLevel")
+    tog(L, "Win Streak",   "ESPWinStreak")
+    tog(L, "Health Bars",  "ESPHealthBar")
+    tog(L, "Skeleton",     "ESPSkeleton")
+    L:AddDivider()
+    drp(L, "Text Font",    "ESPFont", {"UI","System","Plex","Monospace"})
+    sli(L, "Text Size",    "ESPTextSize", 8, 24, 0)
+
+    local L2 = Tabs.Visuals:AddLeftGroupbox("Camera")
+    tog(L2, "Custom FOV",    "CameraFOVEnabled")
+    sli(L2, "Field of View", "CameraFOV", 30, 120, 0)
+
+    local R = Tabs.Visuals:AddRightGroupbox("ESP Colors")
+    clr(R, "General / Health",  "ESPColor",       {"ESPColorR",       "ESPColorG",       "ESPColorB"})
+    clr(R, "Box / Corner",      "ESPBoxColor",     {"ESPBoxColorR",    "ESPBoxColorG",    "ESPBoxColorB"})
+    clr(R, "Tracers",           "ESPTracerColor",  {"ESPTracerColorR", "ESPTracerColorG", "ESPTracerColorB"})
+    clr(R, "Name",              "ESPNameColor",    {"ESPNameColorR",   "ESPNameColorG",   "ESPNameColorB"})
+    clr(R, "Target Line",       "TargetLineColor", {"TargetLineColorR","TargetLineColorG","TargetLineColorB"})
+
+    local R2 = Tabs.Visuals:AddRightGroupbox("Chams")
+    tog(R2, "Chams ESP",    "ChamsESP")
+    clr(R2, "Chams Color",  "ChamsColor", {"ChamsR","ChamsG","ChamsB"})
+
+    local R3 = Tabs.Visuals:AddRightGroupbox("Bullet Effects")
+    tog(R3, "Bullet Tracers",  "BulletTracers")
+    clr(R3, "Tracer Color",    "TracerColor",  {"TracerR","TracerG","TracerB"})
+    tog(R3, "Impact Markers",  "ImpactMarkers")
+    clr(R3, "Impact Color",    "ImpactColor",  {"ImpactR","ImpactG","ImpactB"})
+
+    local R4 = Tabs.Visuals:AddRightGroupbox("Overlays")
+    tog(R4, "Aim Trajectory",    "AimTrajectory")
+    clr(R4, "Trajectory Color",  "AimTrajColor", {"AimTrajR","AimTrajG","AimTrajB"})
+    R4:AddDivider()
+    tog(R4, "Rainbow Visuals",   "RainbowVisuals")
+    tog(R4, "Crosshair",         "CrosshairEnabled")
+    drp(R4, "Crosshair Style",   "CrosshairStyle",  CROSSHAIR_STYLES)
+    sli(R4, "Crosshair Scale %", "CrosshairSize",   25, 300, 0)
+    tog(R4, "Spin Crosshair",    "CrosshairSpin")
+    tog(R4, "Target Line",       "TargetLine")
+end
+
+do
+    local L = Tabs.Movement:AddLeftGroupbox("Speed & Jump")
+    tog(L, "Walk Speed",     "WalkSpeedEnabled")
+    sli(L, "Speed",          "WalkSpeed",  16,  200, 0)
+    L:AddDivider()
+    tog(L, "Jump Power",     "JumpPowerEnabled")
+    sli(L, "Power",          "JumpPower",  50,  300, 0)
+    tog(L, "Infinite Jump",  "InfJump")
+
+    local L2 = Tabs.Movement:AddLeftGroupbox("Mobility")
+    tog(L2, "Fly  [WASD + Space/Shift]", "Fly")
+    tog(L2, "Noclip",                    "Noclip")
+
+    local R = Tabs.Movement:AddRightGroupbox("Teleport")
+    tog(R, "TP to Cursor [T]", "TPToCursor")
+    tog(R, "TP to Players",    "Teleport")
+end
+
+do
+    local L = Tabs.World:AddLeftGroupbox("Lighting")
+    tog(L, "Map Visuals", "MapVisuals")
+    drp(L, "Preset", "MapVisualsPreset",
+        {"Arctic Night","Blood Moon","Neon Void","Toxic Wasteland","Heaven","Inferno","Golden Hour","Matrix"})
+    tog(L, "High Saturation", "HighSaturation")
+
+
+    local L3 = Tabs.World:AddLeftGroupbox("Skybox")
+    tog(L3, "Skybox Changer", "SkyboxEnabled")
+    drp(L3, "Skybox", "SkyboxPreset", {"Dark Sky","Art Mountain","Vaporwave","Nebula","Twilight","Lake Sky","Alien Red","Black Mesa","Clouds"})
+
+    local R = Tabs.World:AddRightGroupbox("Map Color & Dome")
+    tog(R, "Rainbow Map",    "RainbowMap")
+    R:AddDivider()
+    tog(R, "Map Color",      "MapColorEnabled")
+    clr(R, "Color",          "MapColor",    {"MapColorR","MapColorG","MapColorB"})
+    R:AddDivider()
+    tog(R, "Dome Walls",     "MapDome")
+    drp(R, "Material",       "MapDomeMaterial", DOME_MATERIALS)
+    clr(R, "Dome Color",     "DomeColor",   {"MapDomeColorR","MapDomeColorG","MapDomeColorB"})
+    sli(R, "Transparency",   "MapDomeTransparency", 0, 100, 0)
+end
+
+do
+    local L = Tabs.Misc:AddLeftGroupbox("Security")
+    tog(L, "Unlock All Skins","UnlockSkins")
+    tog(L, "AC Bypass","ACBypass")
+
+    local L2 = Tabs.Misc:AddLeftGroupbox("Streaming Mode")
+    tog(L2, "Hide Username", "StreamingMode")
+    inp(L2, "Display As",    "StreamingAlias", "Streamer", function(v)
+        STATE.StreamingAlias = v ~= "" and v or "Streamer"; saveConfig()
+    end)
+    L2:AddDivider()
+    tog(L2, "Spoof Device", "SpoofDevice")
+    drp(L2, "Device Type", "SpoofDeviceType", {"MouseKeyboard", "Gamepad", "Touch", "VR"})
+
+    local R = Tabs.Misc:AddRightGroupbox("Server & Utility")
+    btn(R, "Server Hop",      serverHop)
+    btn(R, "Redeem All Codes",redeemCodes)
+    R:AddDivider()
+    btn(R, "Destroy Script",  stopScript)
+
+    local R2 = Tabs.Misc:AddRightGroupbox("Information Logger")
+    tog(R2, "Info Logger", "InfoLogger")
+    clr(R2, "Theme Color", "InfoLoggerColor", {"InfoLoggerColorR", "InfoLoggerColorG", "InfoLoggerColorB"})
+    R2:AddDivider()
+    tog(R2, "Show Players", "InfoLoggerPlayers")
+    sli(R2, "Max Players Displayed", "InfoLoggerMaxPlayers", 1, 60, 0, 15)
+    R2:AddDivider()
+    tog(R2, "Risky Playstyle Alert", "InfoLoggerRiskyAlert")
+end
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetFolder("RivalsRage")
+
+-- ─── Menu Toggle Keybind ────────────────────────────────────────
+-- Obsidian's built-in ToggleKeybind only fires for KeyPicker objects, not a raw
+-- KeyCode, so we drive the toggle ourselves. Default is "K"; type any
+-- Enum.KeyCode name (K, RightShift, F, Insert, ...) into the textbox to rebind.
+do
+    local UIMenu = Tabs.UI:AddLeftGroupbox("Menu")
+    local menuKeyInput
+    local settingKey = false
+    menuKeyInput = UIMenu:AddInput("MenuToggleKey", {
+        Default = STATE.MenuToggleKey,
+        Text = "Menu Toggle Key",
+        Finished = true,
+        Placeholder = "e.g. K",
+        Callback = function(value)
+            if settingKey then return end
+            local cleaned = tostring(value):gsub("%s+", "")
+            local matched
+            for _, kc in ipairs(Enum.KeyCode:GetEnumItems()) do
+                if kc.Name:lower() == cleaned:lower() then
+                    matched = kc.Name
+                    break
+                end
+            end
+            settingKey = true
+            if matched then
+                STATE.MenuToggleKey = matched
+                saveConfig()
+                if menuKeyInput then menuKeyInput:SetValue(matched) end
+                notify("Menu toggle key set to: " .. matched)
+            else
+                if menuKeyInput then menuKeyInput:SetValue(STATE.MenuToggleKey) end
+                notify("Invalid key '" .. tostring(value) .. "' - kept " .. STATE.MenuToggleKey)
+            end
+            settingKey = false
+        end,
+    })
+    UIMenu:AddButton("Unload Script", stopScript)
+
+    Library:GiveSignal(UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe or Library.Unloaded then return end
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        if UserInputService:GetFocusedTextBox() then return end
+        local keyName = STATE.MenuToggleKey
+        if not keyName or keyName == "" then return end
+        local ok, keyCode = pcall(function() return Enum.KeyCode[keyName] end)
+        if ok and keyCode and input.KeyCode == keyCode then
+            Library:Toggle()
+        end
+    end))
+end
+
+ThemeManager:ApplyToTab(Tabs.UI)
+SaveManager:BuildConfigSection(Tabs.UI)
+
+-- ─── Device Spoofer ──────────────────────────────────────────────────────────
+
+local _currentSpoofed = nil
+local function updateSpoofedDevice()
+    if STATE.SpoofDevice then
+        if _currentSpoofed ~= STATE.SpoofDeviceType then
+            _currentSpoofed = STATE.SpoofDeviceType
+            pcall(function()
+                local Rep = game:GetService("ReplicatedStorage")
+                local setCtrl = Rep:WaitForChild("Remotes"):WaitForChild("Replication"):WaitForChild("Fighter"):WaitForChild("SetControls")
+                setCtrl:FireServer(STATE.SpoofDeviceType)
+            end)
+        end
+    elseif _currentSpoofed ~= nil then
+        _currentSpoofed = nil
+    end
+end
+
+RunService.RenderStepped:Connect(updateSpoofedDevice)
+
+
+-- ─── Anti Explosion & Molotov ───────────────────────────────────────────────
+
+RunService.Stepped:Connect(function()
+    if not STATE.Master then return end
+    if STATE.AntiExplosion then
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("Explosion") then
+                pcall(function() v:Destroy() end)
+            end
+        end
+    end
+    if STATE.AntiMolotov then
+        local char = LocalPlayer.Character
+        if char then
+            for _, v in ipairs(char:GetDescendants()) do
+                if v.Name == "Molotov" or v.Name == "Fire" then
+                    pcall(function() v:Destroy() end)
+                end
+            end
+        end
+    end
+end)
+
+-- ─── AC Bypass ───────────────────────────────────────────────────────────────
+
+local _acBypassed = false
+local function enableACBypass()
+    if _acBypassed or not STATE.ACBypass then return end
+    _acBypassed = true
+
+    local _stbl; _stbl = hookfunction(getrenv().setmetatable, newcclosure(function(tbl, mt)
+        if mt and typeof(mt) == "table" and rawget(mt, "__mode") == "kv" then
+            local tr = debug.traceback()
+            if tr:find("MiscellaneousController") then
+                return _stbl({1,2,3}, {})
+            end
+        end
+        return _stbl(tbl, mt)
+    end))
+
+    coroutine.wrap(function()
+        pcall(function()
+            local function _proc(o)
+                pcall(function()
+                    if o:IsA("LocalScript") or o:IsA("ModuleScript") then
+                        local _s, nm = pcall(function() return o.Name:lower() end)
+                        if not _s or not nm then return end
+                        local _tags = {"anticheat","ac","detection","ban","kick","security","moderation"}
+                        for _i = 1, #_tags do
+                            if nm:find(_tags[_i]) then
+                                pcall(function() o.Disabled = true end)
+                                break
+                            end
+                        end
+                    end
+                end)
+            end
+            pcall(function()
+                local _desc = game:GetDescendants()
+                for _i = 1, #_desc do _proc(_desc[_i]) end
+            end)
+            pcall(function() game.DescendantAdded:Connect(_proc) end)
+        end)
+        pcall(function()
+            local _nc = game:GetService("NetworkClient")
+            if not _nc then return end
+            _nc.ChildAdded:Connect(function(ch)
+                pcall(function()
+                    local _ok, _n = pcall(function() return ch.Name:lower() end)
+                    if _ok and _n then
+                        if _n:find("anticheat") or _n:find("detection") then
+                            pcall(function() ch:Destroy() end)
+                        end
+                    end
+                end)
+            end)
+        end)
+    end)()
+
+    local _fakeEv
+    pcall(function()
+        _fakeEv = Instance.new("RemoteEvent")
+        _fakeEv.Name = "ClientAlert"
+        _fakeEv.Parent = game:GetService("Players").LocalPlayer
+    end)
+
+    pcall(function()
+        local _rf = game:GetService("ReplicatedFirst")
+        local _tgt = _rf:FindFirstChild("LocalScript3")
+        if not _tgt then return end
+        
+        local _gc = getgc(false)
+        for _i = 1, #_gc do
+            local _fn = _gc[_i]
+            if type(_fn) ~= "function" then continue end
+            local _ok1, _env = pcall(getfenv, _fn)
+            if not _ok1 or type(_env) ~= "table" then continue end
+            local _ok2, _scr = pcall(function() return rawget(_env, "script") end)
+            if not _ok2 or not _scr or typeof(_scr) ~= "Instance" then continue end
+            local _ok3, _ss = pcall(tostring, _scr)
+            if not _ok3 then continue end
+            if not (_scr == _tgt or (type(_ss) == "string" and _ss:find("LoadingScreen"))) then continue end
+            local _ok4, _consts = pcall(debug.getconstants, _fn)
+            if not _ok4 or type(_consts) ~= "table" then continue end
+            for _j = 1, #_consts do
+                local _c = _consts[_j]
+                if type(_c) == "string" and (_c:find("TakeTheL") or _c:find("ban") or _c:find("kick")) then
+                    pcall(function()
+                        hookfunction(_fn, function() end)
+                    end)
+                    break
+                end
+            end
+        end
+    end)
+end
+
+RunService.Stepped:Connect(function()
+    if STATE.ACBypass and not _acBypassed then
+        enableACBypass()
+    end
+end)
+
+-- ─── Mobile Aim Button ───────────────────────────────────────────────────────
+
+local _mobileAimGui = Instance.new("ScreenGui")
+_mobileAimGui.Name = "_RR_MobileAim"; _mobileAimGui.ResetOnSpawn = false; _mobileAimGui.IgnoreGuiInset = true
+do
+    local ok = pcall(function() _mobileAimGui.Parent = game:GetService("CoreGui") end)
+    if not ok then _mobileAimGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+end
+
+local TWEEN_INFO = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local mobileAimBtn = Instance.new("Frame", _mobileAimGui)
+mobileAimBtn.Name = "MobileAimBtn"; mobileAimBtn.Size = UDim2.new(0,72,0,72)
+mobileAimBtn.Position = UDim2.new(1,-100,1,-180)
+mobileAimBtn.BackgroundColor3 = Color3.fromRGB(85,170,255)
+mobileAimBtn.BackgroundTransparency = 0.25; mobileAimBtn.Visible = false
+mobileAimBtn.ZIndex = 5; mobileAimBtn.Active = true
+
+do
+    local corner = Instance.new("UICorner", mobileAimBtn); corner.CornerRadius = UDim.new(1,0)
+    local stroke = Instance.new("UIStroke", mobileAimBtn); stroke.Color = Color3.new(1,1,1); stroke.Thickness = 2
+    local label  = Instance.new("TextLabel", mobileAimBtn)
+    label.Size = UDim2.new(1,0,1,0); label.BackgroundTransparency = 1
+    label.Text = "AIM"; label.TextColor3 = Color3.new(1,1,1)
+    label.Font = Enum.Font.GothamBold; label.TextSize = 16; label.ZIndex = 5
+    local btn = Instance.new("TextButton", mobileAimBtn)
+    btn.Size = UDim2.new(1,0,1,0); btn.BackgroundTransparency = 1
+    btn.Text = ""; btn.ZIndex = 6; btn.AutoButtonColor = false
+
+    local mbDragStart, mbStartPos, mbDragDist, mbAimOn = nil, nil, 0, false
+    local DRAG_THRESH = 8
+
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.Touch
+            and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        mbDragStart = input.Position; mbStartPos = mobileAimBtn.Position; mbDragDist = 0
+        if STATE.AimMode == "Hold" then
+            STATE.AimActive = true; mbAimOn = true
+            TweenService:Create(mobileAimBtn, TWEEN_INFO, {BackgroundTransparency = 0}):Play()
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not mbDragStart then return end
+        if input.UserInputType ~= Enum.UserInputType.Touch
+            and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+        local delta = input.Position - mbDragStart
+        mbDragDist = delta.Magnitude
+        if mbDragDist > DRAG_THRESH then
+            if mbAimOn then STATE.AimActive = false; mbAimOn = false
+                TweenService:Create(mobileAimBtn, TWEEN_INFO, {BackgroundTransparency = 0.25}):Play() end
+            mobileAimBtn.Position = UDim2.new(
+                mbStartPos.X.Scale, mbStartPos.X.Offset + delta.X,
+                mbStartPos.Y.Scale, mbStartPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if not mbDragStart then return end
+        if input.UserInputType ~= Enum.UserInputType.Touch
+            and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        if mbDragDist <= DRAG_THRESH then
+            if STATE.AimMode == "Toggle" then
+                STATE.AimActive = not STATE.AimActive
+                TweenService:Create(mobileAimBtn, TWEEN_INFO, {BackgroundTransparency = STATE.AimActive and 0 or 0.25}):Play()
+            else
+                STATE.AimActive = false
+                TweenService:Create(mobileAimBtn, TWEEN_INFO, {BackgroundTransparency = 0.25}):Play()
+            end
+        else
+            STATE.AimActive = false
+            TweenService:Create(mobileAimBtn, TWEEN_INFO, {BackgroundTransparency = 0.25}):Play()
+        end
+        mbDragStart = nil; mbDragDist = 0; mbAimOn = false
+    end)
+end
+
+RunService.RenderStepped:Connect(function()
+    pcall(function()
+        mobileAimBtn.Visible = STATE.AimKeyName == "Mobile" and STATE.Aimbot and STATE.Master
+    end)
+end)
+
+-- ─── Auto Play Hook ────────────────────────────────────────────────────────
+
+local PathfindingService = game:GetService("PathfindingService")
+local _AP = {
+    lastCompute = 0,
+    path = nil,
+    wpIdx = 0,
+    target = nil,
+    lastShot = 0,
+    lastJump = 0,
+    lastLeaveCheck = 0,
+}
+
+local function performClick()
+    if mouse1click then
+        mouse1click()
+    elseif mouse1press then
+        mouse1press()
+        task.wait(0.01)
+        if mouse1release then mouse1release() end
+    else
+        local vim = game:GetService("VirtualInputManager")
+        local cam = workspace.CurrentCamera
+        vim:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, true, game, 1)
+        task.wait(0.01)
+        vim:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, false, game, 1)
+    end
+end
+
+local function performCameraMove(dx, dy)
+    if mousemoverel then
+        mousemoverel(dx, dy)
+    else
+        local cam = workspace.CurrentCamera
+        local fovX = math.rad(cam.FieldOfView)
+        local rotY = -(dx / cam.ViewportSize.X) * fovX
+        local rotX = -(dy / cam.ViewportSize.X) * fovX
+        
+        local cx, cy, cz = cam.CFrame:ToEulerAnglesYXZ()
+        local newX = math.clamp(cx + rotX, -math.rad(89), math.rad(89))
+        local newY = cy + rotY
+        
+        cam.CFrame = CFrame.new(cam.CFrame.Position) * CFrame.Angles(0, newY, 0) * CFrame.Angles(newX, 0, 0)
+    end
+end
+
+local function getAutoPlayTarget()
+    local closest, dist = nil, math.huge
+    local lpChar = LocalPlayer.Character
+    if not lpChar then return nil end
+    local lpRoot = lpChar:FindFirstChild("HumanoidRootPart")
+    if not lpRoot then return nil end
+    
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer or not isAlive(p) or not isEnemy(p) then continue end
+        local tChar = p.Character
+        local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+        if tRoot then
+            local d = (tRoot.Position - lpRoot.Position).Magnitude
+            if d < dist and d <= 350 then
+                dist = d; closest = p
+            end
+        end
+    end
+    return closest
+end
+
+local function isVisibleObj(origin, targetPos, ignore)
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = ignore
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    local res = workspace:Raycast(origin, targetPos - origin, params)
+    return res == nil
+end
+
+local function canTriggerHit(tChar)
+    local char = LocalPlayer.Character
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = {char}
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local res = workspace:Raycast(Camera.CFrame.Position, Camera.CFrame.LookVector * 500, params)
+    return res and res.Instance and res.Instance:IsDescendantOf(tChar)
+end
+
+RunService.RenderStepped:Connect(function()
+    if not STATE.AutoPlay or not STATE.Master then return end
+
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    if tick() - _AP.lastLeaveCheck > 1 then
+        _AP.lastLeaveCheck = tick()
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            if pg then
+                local di = pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("MainFrame") and pg.MainGui.MainFrame:FindFirstChild("DuelInterfaces")
+                if di then
+                    for _, child in ipairs(di:GetChildren()) do
+                        local fr = child:FindFirstChild("FinalResults")
+                        if fr and fr.Visible then
+                            local leaveBtn = fr.Buttons.BottomRight.Container:FindFirstChild("Leave")
+                            if leaveBtn and leaveBtn.Visible then
+                                task.spawn(function()
+                                    for i = 1, 3 do
+                                        if getconnections then
+                                            for _, c in ipairs(getconnections(leaveBtn.MouseButton1Click)) do pcall(function() c:Fire() end) end
+                                            for _, c in ipairs(getconnections(leaveBtn.Activated)) do pcall(function() c:Fire() end) end
+                                        else
+                                            local vim = game:GetService("VirtualInputManager")
+                                            local x = leaveBtn.AbsolutePosition.X + (leaveBtn.AbsoluteSize.X / 2)
+                                            local y = leaveBtn.AbsolutePosition.Y + (leaveBtn.AbsoluteSize.Y / 2) + 36
+                                            vim:SendMouseButtonEvent(x, y, 0, true, game, 1)
+                                            task.wait(0.05)
+                                            vim:SendMouseButtonEvent(x, y, 0, false, game, 1)
+                                        end
+                                        task.wait(0.2)
+                                    end
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not root or not hum or hum.Health <= 0 then return end
+
+    local inLobby = false
+    pcall(function()
+        local spawn = workspace.Lobby.Hub.Important.Center.Spawn
+        if (root.Position - spawn.Position).Magnitude <= 125 then
+            inLobby = true
+        end
+    end)
+    if inLobby then return end
+
+    _AP.target = getAutoPlayTarget()
+    if not _AP.target then 
+        return 
+    end
+    
+    local tChar = _AP.target.Character
+    if not tChar then return end
+    local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+    local tHead = tChar:FindFirstChild("Head") or tRoot
+    if not tRoot then return end
+    
+    local isVis = isVisibleObj(Camera.CFrame.Position, tHead.Position, {char, tChar})
+    
+    -- Pathfinding Polling
+    if tick() - _AP.lastCompute > 0.3 then
+        _AP.lastCompute = tick()
+        task.spawn(function()
+            local path = PathfindingService:CreatePath({
+                AgentRadius = 2, AgentHeight = 5, AgentCanJump = true
+            })
+            local targetPos = tRoot.Position
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {char, tChar}
+            local floorRay = workspace:Raycast(targetPos, Vector3.new(0, -50, 0), params)
+            if floorRay then targetPos = floorRay.Position end
+            
+            local toUs = (root.Position - targetPos)
+            local flatToUs = Vector3.new(toUs.X, 0, toUs.Z)
+            if flatToUs.Magnitude > 0 then
+                targetPos = targetPos + flatToUs.Unit * 8
+            end
+            
+            local s = pcall(function()
+                path:ComputeAsync(root.Position, targetPos)
+            end)
+            if s and path.Status == Enum.PathStatus.Success then
+                _AP.path = path:GetWaypoints()
+                local newIdx = 2
+                while _AP.path[newIdx] do
+                    local dist = (Vector3.new(_AP.path[newIdx].Position.X, 0, _AP.path[newIdx].Position.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude
+                    if dist > 3 then break end
+                    newIdx = newIdx + 1
+                end
+                _AP.wpIdx = newIdx
+            end
+        end)
+    end
+    
+    local moveTarget = tRoot.Position
+    local hasWaypoint = false
+    local activeMoveDir = nil
+
+    local enemyDist = (tRoot.Position - root.Position).Magnitude
+    local apSpeedMult = (STATE.AutoPlaySpeed or 65) / 100
+    if isVis and enemyDist < 12 then
+        if enemyDist < 8 then
+            local dirAway = Vector3.new(root.Position.X - tRoot.Position.X, 0, root.Position.Z - tRoot.Position.Z)
+            if dirAway.Magnitude > 0 then
+                activeMoveDir = dirAway.Unit
+                hum:Move(activeMoveDir * apSpeedMult, false)
+            else
+                hum:Move(Vector3.zero, false)
+            end
+        else
+            hum:Move(Vector3.zero, false)
+        end
+    else
+        if _AP.path and _AP.path[_AP.wpIdx] then
+            hasWaypoint = true
+            local wp = _AP.path[_AP.wpIdx]
+            moveTarget = wp.Position
+            
+            local dist2D = Vector2.new(root.Position.X - moveTarget.X, root.Position.Z - moveTarget.Z).Magnitude
+            if dist2D < 3 then
+                _AP.wpIdx = _AP.wpIdx + 1
+            end
+            if wp.Action == Enum.PathWaypointAction.Jump then
+                hum.Jump = true
+            end
+        end
+        
+        local walkSpeed = math.clamp(STATE.WalkSpeedEnabled and STATE.WalkSpeed or 16, 0, 20)
+        local slowdownMult = (walkSpeed > 16 and (16 / walkSpeed) or 1) * apSpeedMult
+        
+        local dir = Vector3.new(moveTarget.X - root.Position.X, 0, moveTarget.Z - root.Position.Z)
+        if dir.Magnitude > 0 then
+            activeMoveDir = dir.Unit
+            hum:Move(activeMoveDir * slowdownMult, false)
+            if hum.FloorMaterial ~= Enum.Material.Air then
+                if root.Velocity.Magnitude < 2 and tick() - _AP.lastJump > 0.5 then
+                    hum.Jump = true
+                    _AP.lastJump = tick()
+                elseif math.random() < 0.12 and tick() - _AP.lastJump > 0.8 then
+                    hum.Jump = true
+                    _AP.lastJump = tick()
+                end
+            end
+        else
+            hum:Move(Vector3.zero, false)
+        end
+    end
+
+    local lookTarget = nil
+
+    if isVis then
+        lookTarget = tHead.Position
+        if canTriggerHit(tChar) and tick() - _AP.lastShot > 0.05 then
+            _AP.lastShot = tick()
+            task.spawn(performClick)
+        end
+    elseif activeMoveDir then
+        lookTarget = Camera.CFrame.Position + activeMoveDir * 100
+    end
+
+    if lookTarget then
+        local screenPos, onScreen = Camera:WorldToViewportPoint(lookTarget)
+        local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        if onScreen then
+            local moveX = screenPos.X - center.X
+            local moveY = isVis and (screenPos.Y - center.Y) or 0
+            
+            local smoothVal = isVis and (STATE.AutoPlayAimSmoothness * 0.1) or (STATE.AutoPlayPathSmoothness * 0.1)
+            local move = Vector2.new(moveX, moveY) / math.max(smoothVal, 0.05)
+
+            if isVis and STATE.AimHumanize then move = move + Vector2.new(math.random(-2, 2), math.random(-2, 2)) end
+            performCameraMove(math.floor(move.X), math.floor(move.Y))
+        else
+            local camCFrame = Camera.CFrame
+            local targetDir = (lookTarget - camCFrame.Position).Unit
+            local right = camCFrame.RightVector
+            local mult = right:Dot(targetDir) > 0 and 1 or -1
+
+            local turnSpeed = isVis and (25 / math.max(STATE.AutoPlayAimSmoothness * 0.1, 0.5)) or (25 / math.max(STATE.AutoPlayPathSmoothness * 0.1, 0.5))
+            performCameraMove(math.floor(mult * turnSpeed), 0)
+        end
+    end
+end)
+
+-- ─── Info Logger ─────────────────────────────────────────────────────────────
+
+local _infoLoggerGui = Instance.new("ScreenGui")
+_infoLoggerGui.Name = "_RR_InfoLogger"; _infoLoggerGui.ResetOnSpawn = false; _infoLoggerGui.IgnoreGuiInset = true
+do
+    local ok = pcall(function() _infoLoggerGui.Parent = game:GetService("CoreGui") end)
+    if not ok then _infoLoggerGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+end
+
+local infoScroll = Instance.new("ScrollingFrame", _infoLoggerGui)
+infoScroll.Position = UDim2.new(0, 10, 1, -10)
+infoScroll.AnchorPoint = Vector2.new(0, 1)
+infoScroll.Size = UDim2.new(0, 320, 0.45, 0)
+infoScroll.BackgroundTransparency = 1
+infoScroll.BorderSizePixel = 0
+infoScroll.ScrollBarThickness = 2
+infoScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+infoScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+infoScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+infoScroll.Visible = false
+
+local infoContainer = Instance.new("Frame", infoScroll)
+infoContainer.BackgroundTransparency = 1
+infoContainer.Size = UDim2.new(1, -10, 0, 0)
+infoContainer.AutomaticSize = Enum.AutomaticSize.Y
+
+local infoListLayout = Instance.new("UIListLayout", infoContainer)
+infoListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+infoListLayout.Padding = UDim.new(0, 6)
+
+local infoTitle = Instance.new("TextLabel", infoContainer)
+infoTitle.BackgroundTransparency = 1
+infoTitle.Size = UDim2.new(1, 0, 0, 24)
+infoTitle.Font = Enum.Font.GothamBlack
+infoTitle.TextSize = 16
+infoTitle.Text = "📊 INFORMATION LOGGER"
+infoTitle.TextColor3 = Color3.new(1, 1, 1)
+infoTitle.TextXAlignment = Enum.TextXAlignment.Left
+infoTitle.TextYAlignment = Enum.TextYAlignment.Center
+infoTitle.LayoutOrder = 0
+
+local titleShadow = Instance.new("UIStroke", infoTitle)
+titleShadow.Color = Color3.new(0, 0, 0)
+titleShadow.Transparency = 0.3
+titleShadow.Thickness = 1.5
+
+local function createSection(name, icon, order, isCombat)
+    local frame = Instance.new("Frame", infoContainer)
+    frame.BackgroundTransparency = 0.25
+    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    frame.LayoutOrder = order
+    frame.BorderSizePixel = 0
+    frame.AutomaticSize = Enum.AutomaticSize.Y
+    frame.Size = UDim2.new(1, 0, 0, 0)
+    
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = Color3.fromRGB(60, 60, 70)
+    stroke.Thickness = 1.5
+    
+    local header = Instance.new("Frame", frame)
+    header.Size = UDim2.new(1, 0, 0, 26)
+    header.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+    header.BorderSizePixel = 0
+    
+    local div = Instance.new("Frame", header)
+    div.BackgroundColor3 = Color3.new(1, 1, 1)
+    div.BackgroundTransparency = 0
+    div.Size = UDim2.new(1, 0, 0, 2)
+    div.Position = UDim2.new(0, 0, 1, -2)
+    div.BorderSizePixel = 0
+    
+    local title = Instance.new("TextLabel", header)
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -10, 1, -2)
+    title.Position = UDim2.new(0, 10, 0, 0)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 12
+    title.Text = icon .. " " .. name
+    title.TextColor3 = Color3.new(0.95, 0.95, 0.95)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local content = Instance.new("TextLabel", frame)
+    content.BackgroundTransparency = 1
+    content.Size = UDim2.new(1, -20, 0, 0)
+    content.Position = UDim2.new(0, 10, 0, 34)
+    content.Font = Enum.Font.GothamMedium
+    content.TextSize = isCombat and 14 or 11
+    content.LineHeight = isCombat and 1.35 or 1.2
+    content.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+    content.TextXAlignment = Enum.TextXAlignment.Left
+    content.TextYAlignment = Enum.TextYAlignment.Top
+    content.TextWrapped = true
+    content.RichText = true
+    content.AutomaticSize = Enum.AutomaticSize.Y
+    
+    local pad = Instance.new("UIPadding", frame)
+    pad.PaddingBottom = UDim.new(0, 10)
+    
+    return { frame = frame, stroke = stroke, header = header, title = title, div = div, content = content }
+end
+
+local SectionCombat = createSection("COMBAT STATS", "⚔️", 1, true)
+local SectionPlayers = createSection("ALL PLAYERS", "👥", 2, false)
+
+local _cachedPlayerDataController = nil
+local _lastRiskyNotif = 0
+local function getInfoStats()
+    local uses, hits, crits = 0, 0, 0
+    pcall(function()
+        if not _cachedPlayerDataController then
+            local Controllers = LocalPlayer.PlayerScripts:FindFirstChild("Controllers")
+            if Controllers then
+                local pdcModule = Controllers:FindFirstChild("PlayerDataController")
+                if pdcModule then
+                    _cachedPlayerDataController = require(pdcModule)
+                end
+            end
+        end
+        local PDC = _cachedPlayerDataController
+        if PDC and type(PDC.Get) == "function" then
+            local success = pcall(function()
+                uses = PDC:Get("StatisticUses") or 0
+                hits = PDC:Get("StatisticUsesHits") or 0
+                crits = PDC:Get("StatisticUsesCriticalHits") or 0
+            end)
+            if not success and PDC.GetAll then
+                local data = PDC:GetAll()
+                if data then
+                    uses = data.StatisticUses or 0
+                    hits = data.StatisticUsesHits or 0
+                    crits = data.StatisticUsesCriticalHits or 0
+                end
+            end
+        end
+    end)
+    return uses, hits, crits
+end
+
+local function formatPercent(value, total)
+    if total == 0 then return "0%" end
+    local pct = (value / total) * 100
+    if pct >= 100 then return "100%" end
+    return string.format("%.1f%%", pct)
+end
+
+RunService.RenderStepped:Connect(function()
+    if not STATE.InfoLogger then
+        pcall(function() if infoScroll.Visible then infoScroll.Visible = false end end)
+        return
+    end
+
+    local entities = 0
+    local nearEntities = 0
+    local lpPos = LocalPlayer.Character and LocalPlayer.Character.PrimaryPart and LocalPlayer.Character.PrimaryPart.Position
+    local healthData = {}
+
+    for _, p in next, Players:GetPlayers() do
+        if p.Character then
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local dist = math.huge
+                if p ~= LocalPlayer then
+                    entities = entities + 1
+                    if lpPos and p.Character.PrimaryPart then
+                        dist = (p.Character.PrimaryPart.Position - lpPos).Magnitude
+                        if dist <= 300 then
+                            nearEntities = nearEntities + 1
+                        end
+                    end
+                end
+                table.insert(healthData, {
+                    Name = p.Name,
+                    HP = math.floor(hum.Health),
+                    Max = math.floor(hum.MaxHealth),
+                    Dist = dist,
+                    IsLocal = (p == LocalPlayer)
+                })
+            end
+        end
+    end
+
+    table.sort(healthData, function(a, b)
+        if a.IsLocal then return true end
+        if b.IsLocal then return false end
+        return a.Dist < b.Dist
+    end)
+
+    local uses, hits, crits = getInfoStats()
+    local hitStr = formatPercent(hits, uses)
+    local critStr = formatPercent(crits, uses)
+
+    local combatLines = {}
+
+    if STATE.Master then
+        if STATE.AutoPlay and _AP.target then
+            table.insert(combatLines, string.format("🤖 <b>Bot Target:</b>     <font color='rgb(150,150,255)'>%s</font>", _AP.target.Name))
+        end
+        if STATE.Aimbot and STATE.AimActive then
+            local t = getClosestInFOV()
+            if t then
+                table.insert(combatLines, string.format("🔴 <b>Aim Target:</b>     <font color='rgb(255,150,150)'>%s</font>", t.Name))
+            end
+        end
+        if STATE.SilentAim then
+            local t = getSilentAimTarget()
+            if t then
+                table.insert(combatLines, string.format("👻 <b>Silent Target:</b>  <font color='rgb(150,255,150)'>%s</font>", t.Name))
+            end
+        end
+        if #combatLines > 0 then
+            table.insert(combatLines, " ")
+        end
+    end
+
+    table.insert(combatLines, string.format("🧟 <b>Entities Alive:</b> <font color='rgb(255,255,255)'>%d</font>", entities))
+    table.insert(combatLines, string.format("📍 <b>Entities Nearby:</b> <font color='rgb(255,100,100)'>%d</font>", nearEntities))
+    table.insert(combatLines, " ")
+    table.insert(combatLines, string.format("🎯 <b>Hit Rate:</b>       <font color='rgb(100,255,100)'>%s</font>", hitStr))
+    table.insert(combatLines, string.format("💥 <b>Critical Rate:</b>  <font color='rgb(255,200,50)'>%s</font>", critStr))
+
+    local playerLines = {}
+    
+    if STATE.InfoLoggerRiskyAlert and uses > 50 then
+        local hitPct = (hits / uses) * 100
+        local critPct = (crits / uses) * 100
+        if hitPct > 50 or critPct > 35 then
+            if tick() - _lastRiskyNotif > 60 then
+                _lastRiskyNotif = tick()
+                pcall(function() Library:Notify("⚠️ RISKY PLAYSTYLE: High Accuracy/Crits! Careful raging.") end)
+            end
+        end
+    end
+
+    if STATE.InfoLoggerPlayers then
+        local limit = STATE.InfoLoggerMaxPlayers or 15
+        local count = 0
+        
+        for i, d in ipairs(healthData) do
+            if count >= limit then 
+                table.insert(playerLines, "<i>... and " .. (#healthData - count) .. " more</i>")
+                break
+            end
+            
+            local pObj = Players:FindFirstChild(d.Name)
+            local wsVal = "?"
+            local lvVal = "?"
+            if pObj then
+                local cls = pObj:FindFirstChild("CustomLeaderstats")
+                if cls then
+                    local w = cls:FindFirstChild("Win Streak")
+                    if w then wsVal = tostring(w.Value) end
+                    local l = cls:FindFirstChild("Level")
+                    if l then lvVal = tostring(l.Value) end
+                end
+            end
+
+            local hpPct = d.Max > 0 and (d.HP / d.Max) or 0
+            local hpColor = "rgb(100,255,100)"
+            if hpPct < 0.3 then hpColor = "rgb(255,100,100)"
+            elseif hpPct < 0.7 then hpColor = "rgb(255,200,50)" end
+
+            local prefix = d.IsLocal and "<font color='rgb(85,255,255)'>[You]</font>" or string.format("<font color='rgb(180,180,180)'>[%dm]</font>", math.floor(d.Dist))
+            local entry = string.format("%s <b>%s</b> <font size='10' color='rgb(160,160,160)'>(Lv %s | W %s)</font>  <font color='%s'>[%d/%d]</font>", prefix, d.Name, lvVal, wsVal, hpColor, d.HP, d.Max)
+            
+            count = count + 1
+            table.insert(playerLines, entry)
+        end
+        if count == 0 then
+            table.insert(playerLines, "<i>No targets alive</i>")
+        end
+    else
+        table.insert(playerLines, "<i>(Collapsed in Misc Menu)</i>")
+    end
+
+    pcall(function()
+        local c3 = Color3.fromRGB(STATE.InfoLoggerColorR, STATE.InfoLoggerColorG, STATE.InfoLoggerColorB)
+        infoTitle.TextColor3 = c3
+        for _, q in pairs({SectionCombat, SectionPlayers}) do
+            q.stroke.Color = c3
+            q.div.BackgroundColor3 = c3
+        end
+
+        SectionCombat.content.Text = table.concat(combatLines, "\n")
+        SectionPlayers.content.Text = table.concat(playerLines, "\n")
+        
+        if not infoScroll.Visible then infoScroll.Visible = true end
+    end)
+end)
+
+-- ─── Silent Aim Hook ─────────────────────────────────────────────────────────
+
+local customEnv = getgenv and getgenv() or _G
+if customEnv.SilentAim then customEnv.SilentAim:Shutdown() end
+customEnv.SilentAim = { Active = false }
+
+local GunModule, UtilityModule
+local _ds = {}
+do
+    _ds.__active = false; _ds.__target = nil; _ds.__desync = false
+    _ds.__conn1 = nil; _ds.__conn2 = nil; _ds.__task1 = nil; _ds.__curr = nil
+
+    local _dsRoot = setmetatable({}, {
+        __index = function(_, key)
+            local char = LocalPlayer.Character; if not char then return nil end
+            if key == "__root" then return char:FindFirstChild("HumanoidRootPart")
+            elseif key == "__head" then return char:FindFirstChild("Head") end
+        end
+    })
+
+    function _ds:__find()
+        local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+        local closest, closestDist = nil, math.huge
+        local lChar = LocalPlayer.Character
+        local lRoot = lChar and lChar:FindFirstChild("HumanoidRootPart")
+        for _, player in next, Players:GetPlayers() do
+            if player == LocalPlayer then continue end
+            if STATE.TeamCheck and player:GetAttribute("TeamID") == LocalPlayer:GetAttribute("TeamID") then continue end
+            local char = player.Character; if not char then continue end
+            local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+            local hum  = char:FindFirstChildWhichIsA("Humanoid")
+            if not (head and hum and hum.Health > 0) then continue end
+            if lRoot then
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if root and (root.Position - lRoot.Position).Magnitude > 300 then continue end
+            end
+            local screenPos, _, depth = worldToScreen(head.Position)
+            if depth <= 0 then continue end
+            local dist = (screenPos - center).Magnitude
+            if dist < closestDist then closestDist = dist; closest = player end
+        end
+        return closest
+    end
+
+    function _ds:__desync_start(target)
+        if not target or not target.Character then return end
+        local tHum = target.Character:FindFirstChild("Humanoid")
+        if not tHum or tHum.Health <= 0 then return end
+        if self.__conn2 then self.__conn2:Disconnect() end
+        self.__desync = true; self.__curr = target
+        self.__conn2 = RunService.Heartbeat:Connect(function()
+            if not self.__desync then return end
+            if not self.__curr or not self.__curr.Character then self:__desync_stop(); return end
+            local tHumCheck = self.__curr.Character:FindFirstChild("Humanoid")
+            if not tHumCheck or tHumCheck.Health <= 0 then self:__desync_stop(); return end
+            local rootPart = _dsRoot.__root; if not rootPart then return end
+            local tgtRoot  = self.__curr.Character:FindFirstChild("HumanoidRootPart")
+            if not tgtRoot then self:__desync_stop(); return end
+            local savedCF, savedVel, savedRot = rootPart.CFrame, rootPart.Velocity, rootPart.RotVelocity
+            rootPart.CFrame = tgtRoot.CFrame * CFrame.new(0,-5,0)
+            RunService:BindToRenderStep("__RR_restore", 101, function()
+                if rootPart and rootPart.Parent then
+                    rootPart.CFrame = savedCF; rootPart.Velocity = savedVel; rootPart.RotVelocity = savedRot
+                end
+                RunService:UnbindFromRenderStep("__RR_restore")
+            end)
+        end)
+    end
+
+    function _ds:__desync_stop()
+        self.__desync = false
+        pcall(function() RunService:UnbindFromRenderStep("__RR_restore") end)
+        if self.__conn2 then self.__conn2:Disconnect(); self.__conn2 = nil end
+        self.__curr = nil
+    end
+
+    function _ds:__startHeartbeat()
+        if self.__conn1 then self.__conn1:Disconnect() end
+        self.__conn1 = RunService.Heartbeat:Connect(function()
+            if not self.__active then return end
+            local newTarget = self:__find()
+            if self.__desync and self.__target then
+                local alive = self.__target.Character
+                    and self.__target.Character:FindFirstChild("Humanoid")
+                    and self.__target.Character.Humanoid.Health > 0
+                if not alive then self:__desync_stop(); self.__target = nil end
+            end
+            if not self.__desync then self.__target = newTarget end
+        end)
+    end
+
+    function _ds:enable()
+        if self.__active then return end
+        self.__active = true; self:__startHeartbeat()
+    end
+
+    function _ds:disable()
+        self.__active = false; self:__desync_stop()
+        pcall(function() RunService:UnbindFromRenderStep("__RR_restore") end)
+        if self.__conn1 then self.__conn1:Disconnect(); self.__conn1 = nil end
+        if self.__task1 then task.cancel(self.__task1); self.__task1 = nil end
+        self.__target = nil
+    end
+
+    function _ds:shoot(packetArgs, tgt)
+        local head = tgt.Character and tgt.Character:FindFirstChild("Head"); if not head then return end
+        local tHum = tgt.Character:FindFirstChild("Humanoid")
+        if not tHum or tHum.Health <= 0 then self:__desync_stop(); return end
+        if not self.__desync or self.__curr ~= tgt then self:__desync_start(tgt); task.wait(0.1) end
+        if self.__task1 then task.cancel(self.__task1); self.__task1 = nil end
+        if not tgt.Character then self:__desync_stop(); return end
+        tHum = tgt.Character:FindFirstChild("Humanoid")
+        if not tHum or tHum.Health <= 0 then self:__desync_stop(); return end
+        head = tgt.Character:FindFirstChild("Head"); if not head then return end
+        local targetPos    = head.Position
+        local targetCFrame = head.CFrame
+        local shotOrigin   = targetPos - Vector3.new(0,5,0)
+        local lookDir      = CFrame.lookAt(shotOrigin, targetPos)
+        local noise        = Vector3.new(math.random(), math.random(), math.random())
+        local localHitCF   = targetCFrame:ToObjectSpace(CFrame.new(targetPos + noise))
+        local encode       = type(UtilityModule) == "table" and UtilityModule.EncodeCFrame
+        packetArgs[utf8.char(0)] = encode and UtilityModule:EncodeCFrame(CFrame.new(shotOrigin, targetPos) * CFrame.Angles(lookDir:ToOrientation())) or CFrame.new(shotOrigin, targetPos)
+        packetArgs[utf8.char(1)] = encode and UtilityModule:EncodeCFrame(CFrame.new(targetPos) * CFrame.Angles(lookDir:ToOrientation())) or CFrame.new(targetPos)
+        packetArgs[utf8.char(2)] = head
+        packetArgs[utf8.char(3)] = encode and UtilityModule:EncodeCFrame(localHitCF) or localHitCF
+        self.__task1 = task.delay(0.15, function() self:__desync_stop() end)
+    end
+end
+
+customEnv.SilentAim.Shutdown = function(self)
+    self.Active = false; _ds:disable()
+    if self.Connection1 then self.Connection1:Disconnect(); self.Connection1 = nil end
+    if self.OriginalShoot and type(GunModule) == "table" then GunModule.StartShooting = self.OriginalShoot end
+end
+
+customEnv.SilentAim.Connection1 = RunService.Heartbeat:Connect(function()
+    if STATE.AutoKill and STATE.Master then
+        _ds:enable()
+        customEnv.SilentAim.Target = getLowestHealthTarget()
+    elseif (STATE.SilentAim or STATE.AutoKill) and STATE.Master then
+        if STATE.SilentAimMode == "Wallbang (Risky)" then
+            _ds:enable()
+            customEnv.SilentAim.Target = _ds.__target
+        else
+            _ds:disable()
+            customEnv.SilentAim.Target = STATE.AutoKill and getNearestTarget() or getSilentAimTarget()
+        end
+    else
+        _ds:disable()
+        customEnv.SilentAim.Target = nil
+    end
+end)
+
+task.delay(0.5, function()
+    do local ok, m = pcall(function() return require(LocalPlayer.PlayerScripts.Modules.ItemTypes.Gun) end)
+        if ok and type(m) == "table" then GunModule = m end end
+    task.wait()
+    do local ok, m = pcall(function() return require(ReplicatedStorage.Modules.Utility) end)
+        if ok and type(m) == "table" then UtilityModule = m end end
+    if not (type(GunModule) == "table" and GunModule.StartShooting) then return end
+    customEnv.SilentAim.OriginalShoot = GunModule.StartShooting
+    GunModule.StartShooting = function(self, ...)
+        local args = { customEnv.SilentAim.OriginalShoot(self, ...) }
+        if not self.ClientFighter or not self.ClientFighter.IsLocalPlayer
+            or type(args[3]) ~= "table" or not STATE.SilentAim or not STATE.Master
+            or not customEnv.SilentAim.Target or not customEnv.SilentAim.Target.Character
+            or math.random(100) > STATE.SilentAimHitChance then
+            return unpack(args)
+        end
+        args[4] = true
+        local tgt  = customEnv.SilentAim.Target
+        local head = tgt.Character:FindFirstChild("Head")
+        if not head then return unpack(args) end
+        local targetPos    = head.Position
+        local targetCFrame = head.CFrame
+        local encode       = type(UtilityModule) == "table" and UtilityModule.EncodeCFrame
+        if STATE.SilentAimMode == "Wallbang (Risky)" then
+            local tHum = tgt.Character:FindFirstChild("Humanoid")
+            if not tHum or tHum.Health <= 0 then _ds:__desync_stop(); return unpack(args) end
+            _ds:shoot(args[3], tgt)
+        else
+            local myChar     = LocalPlayer.Character
+            local myRoot     = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local shotOrigin = myRoot and myRoot.Position or (targetPos - Vector3.new(0,5,0))
+            local lookDir    = CFrame.lookAt(shotOrigin, targetPos)
+            local rx, ry, rz = lookDir:ToOrientation()
+            local originCF   = CFrame.new(shotOrigin, targetPos) * CFrame.Angles(rx, ry, rz)
+            local impactCF   = CFrame.new(targetPos)             * CFrame.Angles(rx, ry, rz)
+            local noise      = Vector3.new(math.random(), math.random(), math.random())
+            local localHitCF = targetCFrame:ToObjectSpace(CFrame.new(targetPos + noise))
+            args[3][utf8.char(0)] = encode and UtilityModule:EncodeCFrame(originCF)   or originCF
+            args[3][utf8.char(1)] = encode and UtilityModule:EncodeCFrame(impactCF)   or impactCF
+            args[3][utf8.char(2)] = head
+            args[3][utf8.char(3)] = encode and UtilityModule:EncodeCFrame(localHitCF) or localHitCF
+        end
+        return unpack(args)
+    end
+end)
+
+-- ─── Unlock Skins ────────────────────────────────────────────────────────────
+
+do
+    local _skinHooked = false
+    RunService.Stepped:Connect(function()
+        if not STATE.UnlockSkins or _skinHooked then return end
+        _skinHooked = true
+        task.spawn(function()
+            local ctrl = LocalPlayer.PlayerScripts.Controllers
+            local mods = ReplicatedStorage:WaitForChild("Modules", 10)
+            if not mods then return end
+            local enumLib, cosLib, datCtrl
+            pcall(function() enumLib = require(mods:WaitForChild("EnumLibrary", 10)) end); task.wait()
+            pcall(function() cosLib  = require(mods:WaitForChild("CosmeticLibrary", 10)) end); task.wait()
+            pcall(function() datCtrl = require(ctrl:WaitForChild("PlayerDataController", 10)) end); task.wait()
+            if not cosLib or not datCtrl then return end
+
+            local eq, favs = {}, {}
+            local buildingWep = nil
+            local cosTypes = { "Skin","Wrap","Charm","Dance","Emote" }
+            local function isCosType(c)
+                if not c then return false end
+                for _, t in ipairs(cosTypes) do if c.Type == t then return true end end
+                return false
+            end
+            local function mkCosmetic(nm, ctype, opts)
+                local base = cosLib.Cosmetics[nm]; if not base then return nil end
+                local d = {}; for k, v in pairs(base) do d[k] = v end
+                d.Name = nm; d.Type = d.Type or ctype; d.Seed = d.Seed or math.random(1, 1000000)
+                if enumLib then
+                    local s, eid = pcall(function() return enumLib:ToEnum(nm) end)
+                    if s and eid then d.Enum = eid; d.ObjectID = d.ObjectID or eid end
+                end
+                if opts then
+                    if opts.inverted ~= nil then d.Inverted = opts.inverted end
+                    if opts.favoritesOnly ~= nil then d.OnlyUseFavorites = opts.favoritesOnly end
+                end
+                return d
+            end
+            local cfgFile = "rivals_unlocker_config.json"
+            local saveLock = false
+            pcall(function()
+                if not (isfile and readfile) or not isfile(cfgFile) then return end
+                local ok, raw = pcall(readfile, cfgFile); if not ok or raw == "" then return end
+                local ok2, dec = pcall(function() return HttpService:JSONDecode(raw) end)
+                if not ok2 or not dec then return end
+                if dec.favorites then favs = dec.favorites end
+                if dec.equipped then
+                    for wn, cos in pairs(dec.equipped) do
+                        eq[wn] = {}
+                        for ct, sd in pairs(cos) do
+                            if sd and sd.Name and cosLib.Cosmetics[sd.Name] then
+                                local cl = mkCosmetic(sd.Name, ct, { inverted = sd.Inverted, favoritesOnly = sd.OnlyUseFavorites })
+                                if cl then eq[wn][ct] = cl end
+                            end
+                        end
+                        if not next(eq[wn]) then eq[wn] = nil end
+                    end
+                end
+            end)
+            local function saveCfg()
+                if not writefile or saveLock then return end
+                saveLock = true
+                task.spawn(function()
+                    task.wait(1)
+                    local out = {}
+                    for wn, cos in pairs(eq) do
+                        out[wn] = {}
+                        for ct, cd in pairs(cos) do
+                            if cd and cd.Name then
+                                out[wn][ct] = { Name = cd.Name, Inverted = cd.Inverted, OnlyUseFavorites = cd.OnlyUseFavorites }
+                            end
+                        end
+                    end
+                    local ok, enc = pcall(function() return HttpService:JSONEncode({ equipped = out, favorites = favs }) end)
+                    if ok then pcall(writefile, cfgFile, enc) end
+                    saveLock = false
+                end)
+            end
+            local origOwns = cosLib.OwnsCosmetic
+            cosLib.OwnsCosmeticNormally = function(_, _, nm)
+                local c = cosLib.Cosmetics[nm]; return STATE.UnlockSkins and c ~= nil and c.Type == "Skin" or false
+            end
+            cosLib.OwnsCosmeticUniversally = cosLib.OwnsCosmeticNormally
+            cosLib.OwnsCosmeticForWeapon   = cosLib.OwnsCosmeticNormally
+            cosLib.OwnsCosmetic = function(self, inv, nm, wep)
+                if not STATE.UnlockSkins then return origOwns(self, inv, nm, wep) end
+                if nm:find("MISSING_") or nm == "Bubble Gun" then return origOwns(self, inv, nm, wep) end
+                local c = cosLib.Cosmetics[nm]
+                return (c and isCosType(c)) or origOwns(self, inv, nm, wep)
+            end
+            local origGet = datCtrl.Get
+            datCtrl.Get = function(self, key)
+                local val = origGet(self, key)
+                if not STATE.UnlockSkins then return val end
+                if key == "CosmeticInventory" then
+                    local prx = {}
+                    if val then for k, v in pairs(val) do local c = cosLib.Cosmetics[k]; if c and isCosType(c) then prx[k] = v end end end
+                    return setmetatable(prx, { __index = function(_, k)
+                        local c = cosLib.Cosmetics[k]; return (c and isCosType(c)) and true or nil
+                    end })
+                end
+                if key == "FavoritedCosmetics" then
+                    local res = val and table.clone(val) or {}
+                    for wn2, fv in pairs(favs) do
+                        res[wn2] = res[wn2] or {}
+                        for nm2, isFav in pairs(fv) do
+                            local c = cosLib.Cosmetics[nm2]; if c and isCosType(c) then res[wn2][nm2] = isFav end
+                        end
+                    end
+                    return res
+                end
+                return val
+            end
+            local origGetWep = datCtrl.GetWeaponData
+            datCtrl.GetWeaponData = function(self, wn)
+                local d = origGetWep(self, wn); if not d or not STATE.UnlockSkins then return d end
+                local m = {}; for k, v in pairs(d) do m[k] = v end; m.Name = wn
+                if eq[wn] then for ct, cd in pairs(eq[wn]) do m[ct] = cd end end
+                return m
+            end
+            if hookmetamethod then
+                local remotes  = ReplicatedStorage:FindFirstChild("Remotes")
+                local dataRem  = remotes and remotes:FindFirstChild("Data")
+                local equipRem = dataRem and dataRem:FindFirstChild("EquipCosmetic")
+                local favRem   = dataRem and dataRem:FindFirstChild("FavoriteCosmetic")
+                if equipRem then
+                    local onc
+                    onc = hookmetamethod(game, "__namecall", function(self, ...)
+                        if getnamecallmethod() ~= "FireServer" then return onc(self, ...) end
+                        if not STATE.UnlockSkins then return onc(self, ...) end
+                        local a = { ... }
+                        if self == equipRem then
+                            local wn, ct, cn, opts = a[1], a[2], a[3], a[4] or {}
+                            if cn and cn ~= "None" and cn ~= "" then
+                                local inv = datCtrl:Get("CosmeticInventory")
+                                if inv and rawget(inv, cn) then return onc(self, ...) end
+                            end
+                            eq[wn] = eq[wn] or {}
+                            if not cn or cn == "None" or cn == "" then
+                                eq[wn][ct] = nil; if not next(eq[wn]) then eq[wn] = nil end
+                            else
+                                local cl = mkCosmetic(cn, ct, { inverted = opts.IsInverted, favoritesOnly = opts.OnlyUseFavorites })
+                                if cl then eq[wn][ct] = cl end
+                            end
+                            task.defer(function() pcall(function() datCtrl.CurrentData:Replicate("WeaponInventory") end) end)
+                            saveCfg(); return
+                        end
+                        if self == favRem then
+                            local cos = cosLib.Cosmetics[a[2]]
+                            if cos then
+                                favs[a[1]] = favs[a[1]] or {}; favs[a[1]][a[2]] = a[3] or nil
+                                task.spawn(function() pcall(function() datCtrl.CurrentData:Replicate("FavoritedCosmetics") end) end)
+                                saveCfg()
+                            end
+                            return
+                        end
+                        return onc(self, ...)
+                    end)
+                end
+            end
+            local cliItem
+            task.wait()
+            pcall(function() cliItem = require(LocalPlayer.PlayerScripts.Modules.ClientReplicatedClasses.ClientFighter.ClientItem) end)
+            if cliItem and cliItem._CreateViewModel then
+                local origCVM = cliItem._CreateViewModel
+                cliItem._CreateViewModel = function(self, vmRef)
+                    local wn = self.Name
+                    local wp = self.ClientFighter and self.ClientFighter.Player
+                    buildingWep = (wp == LocalPlayer) and wn or nil
+                    if wp == LocalPlayer and STATE.UnlockSkins and eq[wn] then
+                        local dk  = self:ToEnum("Data")
+                        local ref = vmRef[dk] or vmRef.Data
+                        if ref then
+                            if eq[wn].Skin  then ref[self:ToEnum("Skin")]  = eq[wn].Skin; ref[self:ToEnum("Name")] = eq[wn].Skin.Name end
+                            if eq[wn].Charm then ref[self:ToEnum("Charm")] = eq[wn].Charm end
+                            if eq[wn].Wrap  then ref[self:ToEnum("Wrap")]  = eq[wn].Wrap  end
+                        end
+                    end
+                    local r = origCVM(self, vmRef); buildingWep = nil; return r
+                end
+            end
+            local vmMod = LocalPlayer.PlayerScripts.Modules.ClientReplicatedClasses.ClientFighter.ClientItem:FindFirstChild("ClientViewModel")
+            if vmMod then
+                task.wait()
+                local CVM = require(vmMod); local origNew = CVM.new
+                CVM.new = function(repData, cliItm)
+                    local wp = cliItm.ClientFighter and cliItm.ClientFighter.Player
+                    local wn = buildingWep or cliItm.Name
+                    if wp == LocalPlayer and STATE.UnlockSkins and eq[wn] then
+                        local RC = require(ReplicatedStorage.Modules.ReplicatedClass)
+                        local dk = RC:ToEnum("Data")
+                        repData[dk] = repData[dk] or {}
+                        local cos = eq[wn]
+                        if cos.Skin  then repData[dk][RC:ToEnum("Skin")]  = cos.Skin  end
+                        if cos.Charm then repData[dk][RC:ToEnum("Charm")] = cos.Charm end
+                        if cos.Wrap  then repData[dk][RC:ToEnum("Wrap")]  = cos.Wrap  end
+                    end
+                    return origNew(repData, cliItm)
+                end
+            end
+        end)
+    end)
+end
+
+local function obfuscate()
+	local coreGui = game:GetService("CoreGui")
+	local robloxGui = coreGui:FindFirstChild("RobloxGui")
+	if robloxGui then
+    	local obsidian = robloxGui:FindFirstChild("Obsidian")
+    	if obsidian then
+        	local children = robloxGui:GetChildren()
+        	if #children > 0 then
+        	    local randomChild = children[math.random(1, #children)]
+        	    obsidian.Name = randomChild.Name
+        	end
+    	end
+	end
+end
+
+obfuscate()
